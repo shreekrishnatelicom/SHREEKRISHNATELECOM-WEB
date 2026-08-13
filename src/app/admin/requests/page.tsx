@@ -242,7 +242,7 @@ export default function AdminRequests() {
               ₹{req.price}
             </span>
           )}
-          {req.paymentMethod === "online" ? (
+          {req.paymentMethod === "online" || req.paymentMethod === "razorpay" ? (
             <span className="px-2 py-0.5 text-xs font-black bg-green-500 text-white border-2 border-bauhaus-black uppercase" title={`Payment ID: ${req.razorpayPaymentId || "N/A"}`}>
               🟢 Paid Online {req.razorpayPaymentId ? `(${req.razorpayPaymentId})` : ""}
             </span>
