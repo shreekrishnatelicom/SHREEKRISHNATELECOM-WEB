@@ -17,6 +17,12 @@ export async function GET(req: NextRequest) {
         fileName: true,
         status: true,
         colorMode: true,
+        copies: true,
+        printSide: true,
+        pagesPerSheet: true,
+        paymentMethod: true,
+        price: true,
+        razorpayPaymentId: true,
         createdAt: true,
       },
     });

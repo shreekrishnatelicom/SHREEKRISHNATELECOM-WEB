@@ -44,8 +44,8 @@ export async function POST(req: NextRequest) {
     const updated = await prisma.printRequest.update({
       where: { id: printRequest.id },
       data: {
-        status: "pending", // mark as pending in-queue
-        paymentMethod: "online",
+        status: "pending",        // mark as in-queue (waiting to be processed)
+        paymentMethod: "razorpay", // matches what track page checks
         razorpayPaymentId,
         razorpaySignature,
       }

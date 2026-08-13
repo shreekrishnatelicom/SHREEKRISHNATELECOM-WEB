@@ -80,6 +80,11 @@ export default function PrintService() {
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
+  // Pricing table for live estimate
+  const [pricingTable, setPricingTable] = useState<any[]>([]);
+  const [confirmedPrice, setConfirmedPrice] = useState<number | null>(null);
+
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -130,6 +135,46 @@ export default function PrintService() {
     fetchPaymentSettings();
   }, []);
 
+  // Fetch pricing table for live price estimate
+  useEffect(() => {
+    fetch("/api/admin/printing-prices")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => Array.isArray(data) ? setPricingTable(data) : [])
+      .catch(() => {});
+  }, []);
+
+  // Compute estimated price based on current options
+  const estimatedPrice = (() => {
+    if (files.length === 0) return null;
+    const copiesNum = Number(copies) || 1;
+    const layoutType = pagesPerSheet >= 2 ? "2+" : "1";
+
+    // Find matching rate from pricing table (fallback to hardcoded defaults)
+    let rate: number | null = null;
+    if (pricingTable.length > 0) {
+      const match = pricingTable.find(
+        (p) => p.serviceType === serviceType && p.colorMode === colorMode && p.printSide === printSide && p.layout === layoutType
+      ) || pricingTable.find(
+        (p) => p.serviceType === serviceType && p.colorMode === colorMode && p.printSide === printSide && p.layout === "1"
+      );
+      if (match) rate = match.price;
+    }
+    if (rate === null) {
+      // Fallback defaults
+      if (colorMode === "color") {
+        rate = printSide === "double" ? (layoutType === "2+" ? 14 : 18) : (layoutType === "2+" ? 8 : 10);
+      } else {
+        rate = printSide === "double" ? (layoutType === "2+" ? 2.5 : 3.5) : (layoutType === "2+" ? 1.5 : 2);
+      }
+    }
+
+    // We don't know page count yet — use 1 page per file as a minimum estimate
+    const estimatedPages = files.length; // 1 page per file estimate
+    const printedSides = Math.ceil(estimatedPages / pagesPerSheet);
+    const sheets = printSide === "double" ? Math.ceil(printedSides / 2) : printedSides;
+    return Math.round(rate * sheets * copiesNum * 100) / 100;
+  })();
+
   const triggerFileInput = () => {
     document.getElementById("file-input-element")?.click();
   };
@@ -167,6 +212,7 @@ export default function PrintService() {
       newFiles.push(f);
     }
     setError(null);
+    setConfirmedPrice(null);
     setFiles((prev) => [...prev, ...newFiles]);
   };
 
@@ -321,6 +367,8 @@ export default function PrintService() {
 
       // Handle Razorpay Online payment flow
       if (paymentMethod === "online" && data.razorpayOrderId) {
+        // Show confirmed price before opening Razorpay
+        setConfirmedPrice(data.price ?? 0);
         const options = {
           key: data.razorpayKeyId,
           amount: data.amount,
@@ -844,6 +892,34 @@ export default function PrintService() {
                 ? "⚡ Pay securely using Cards, NetBanking, UPI, or Wallets." 
                 : "🏪 Show tracking ID at the counter to pay and collect prints."}
             </p>
+          </div>
+        )}
+
+        {/* Price Summary */}
+        {files.length > 0 && (
+          <div className="border-4 border-bauhaus-black bg-bauhaus-yellow p-5 shadow-[4px_4px_0_0_#1a1a1a]">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-600 mb-0.5">Estimated Total</p>
+                <p className="text-3xl font-black">
+                  {confirmedPrice !== null
+                    ? <span className="text-green-800">₹{confirmedPrice.toFixed(2)} <span className="text-base font-bold">(Confirmed)</span></span>
+                    : estimatedPrice !== null
+                    ? `₹${estimatedPrice.toFixed(2)}`
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-gray-600 mt-0.5">
+                  {confirmedPrice !== null
+                    ? "Exact amount charged after page count"
+                    : "Estimate based on 1 page/file — exact amount calculated after upload"}
+                </p>
+              </div>
+              <div className="text-right text-xs font-bold uppercase text-gray-600 space-y-0.5">
+                <p>{colorMode === "color" ? "🎨 Color" : "⬛ B&W"} · {printSide === "double" ? "Double-side" : "Single-side"}</p>
+                <p>{pagesPerSheet > 1 ? `${pagesPerSheet} pages/sheet` : "Normal layout"} · {Number(copies) || 1} cop{(Number(copies) || 1) === 1 ? "y" : "ies"}</p>
+                <p className="normal-case text-[10px] text-gray-500">{serviceType === "study-material" ? "Study Material rate" : "Standard rate"}</p>
+              </div>
+            </div>
           </div>
         )}
 

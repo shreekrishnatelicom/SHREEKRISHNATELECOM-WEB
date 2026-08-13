@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Package, CheckCircle, Clock, XCircle } from "lucide-react";
+import { Search, Package, CheckCircle, Clock, XCircle, IndianRupee, CreditCard, Store, AlertCircle } from "lucide-react";
 
 type RequestStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -10,6 +10,12 @@ interface TrackData {
   fileName: string;
   status: RequestStatus;
   colorMode: string;
+  copies: number;
+  printSide: string;
+  pagesPerSheet: number;
+  paymentMethod: string;
+  price: number;
+  razorpayPaymentId: string | null;
   createdAt: string;
 }
 
@@ -48,16 +54,39 @@ export default function TrackPage() {
   const getStatusDisplay = (status: RequestStatus) => {
     switch (status) {
       case "pending":
-        return { icon: <Clock className="w-12 h-12 text-bauhaus-yellow" />, text: "Pending / Waiting for Payment", bg: "bg-bauhaus-yellow/20", border: "border-bauhaus-yellow" };
+        return { icon: <Clock className="w-10 h-10 text-bauhaus-yellow" />, text: "Pending", sub: "Waiting to be processed", bg: "bg-bauhaus-yellow/20", border: "border-bauhaus-yellow" };
       case "processing":
-        return { icon: <Package className="w-12 h-12 text-bauhaus-blue" />, text: "Printing in Progress", bg: "bg-bauhaus-blue/20", border: "border-bauhaus-blue" };
+        return { icon: <Package className="w-10 h-10 text-bauhaus-blue" />, text: "Printing in Progress", sub: "Your document is being printed", bg: "bg-bauhaus-blue/20", border: "border-bauhaus-blue" };
       case "completed":
-        return { icon: <CheckCircle className="w-12 h-12 text-green-600" />, text: "Completed / Ready for Pickup", bg: "bg-green-100", border: "border-green-600" };
+        return { icon: <CheckCircle className="w-10 h-10 text-green-600" />, text: "Completed", sub: "Ready for pickup!", bg: "bg-green-50", border: "border-green-500" };
       case "failed":
-        return { icon: <XCircle className="w-12 h-12 text-bauhaus-red" />, text: "Failed / Cancelled", bg: "bg-bauhaus-red/20", border: "border-bauhaus-red" };
+        return { icon: <XCircle className="w-10 h-10 text-bauhaus-red" />, text: "Failed / Cancelled", sub: "Please contact the shop", bg: "bg-bauhaus-red/10", border: "border-bauhaus-red" };
       default:
-        return { icon: <Search className="w-12 h-12" />, text: "Unknown Status", bg: "bg-gray-100", border: "border-gray-500" };
+        return { icon: <Search className="w-10 h-10" />, text: "Unknown", sub: "", bg: "bg-gray-100", border: "border-gray-400" };
     }
+  };
+
+  const isPaid = (data: TrackData): boolean => {
+    // "razorpay" = saved by verify route (new), "online" = saved by old verify route
+    const isOnlinePaid =
+      (data.paymentMethod === "razorpay" || data.paymentMethod === "online") &&
+      !!data.razorpayPaymentId;
+    if (isOnlinePaid) return true;
+    if (data.paymentMethod === "in-shop" && data.status === "completed") return true;
+    return false;
+  };
+
+  const getPaymentLabel = (data: TrackData) => {
+    if (data.paymentMethod === "razorpay" || data.paymentMethod === "online") return "Online (Razorpay)";
+    if (data.paymentMethod === "in-shop") return "Pay at Shop";
+    return data.paymentMethod;
+  };
+
+  const formatFileName = (name: string) => {
+    if (name.startsWith("[")) {
+      try { return JSON.parse(name).join(", "); } catch { return name; }
+    }
+    return name;
   };
 
   return (
@@ -85,50 +114,103 @@ export default function TrackPage() {
         </form>
 
         {error && (
-          <div className="mt-8 bg-bauhaus-red text-bauhaus-white font-bold p-4 border-4 border-bauhaus-black">
+          <div className="mt-6 bg-bauhaus-red text-bauhaus-white font-bold p-4 border-4 border-bauhaus-black flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0" />
             {error}
           </div>
         )}
       </div>
 
-      {result && (
-        <div className={`border-4 border-bauhaus-black p-4 sm:p-8 bg-bauhaus-white bauhaus-shadow`}>
-          <h2 className="text-2xl font-black uppercase mb-6 border-b-4 border-bauhaus-black pb-2">Status Result</h2>
-          
-          <div className={`border-4 ${getStatusDisplay(result.status).border} ${getStatusDisplay(result.status).bg} p-6 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-4 sm:gap-6 mb-8`}>
-            <div className="shrink-0">
-              {getStatusDisplay(result.status).icon}
-            </div>
-            <div>
-              <p className="font-bold text-gray-600 uppercase text-sm mb-1">Current Status</p>
-              <p className="text-xl sm:text-2xl font-black uppercase">{getStatusDisplay(result.status).text}</p>
-            </div>
-          </div>
+      {result && (() => {
+        const statusInfo = getStatusDisplay(result.status);
+        const paid = isPaid(result);
+        return (
+          <div className="border-4 border-bauhaus-black bg-bauhaus-white bauhaus-shadow divide-y-4 divide-bauhaus-black">
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 font-medium text-base sm:text-lg">
-            <div>
-              <p className="text-gray-500 text-sm font-bold uppercase">Tracking ID</p>
-              <p className="font-mono font-bold text-lg sm:text-xl break-all">{result.trackingId}</p>
+            {/* Status */}
+            <div className={`p-6 ${statusInfo.bg} flex flex-col sm:flex-row items-center sm:items-start gap-4`}>
+              <div className="shrink-0">{statusInfo.icon}</div>
+              <div className="text-center sm:text-left">
+                <p className="text-xs font-black uppercase tracking-widest text-gray-500 mb-1">Print Status</p>
+                <p className="text-2xl font-black uppercase">{statusInfo.text}</p>
+                <p className="text-sm text-gray-600 mt-1">{statusInfo.sub}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-gray-500 text-sm font-bold uppercase">Date</p>
-              <p className="text-sm sm:text-base">{new Date(result.createdAt).toLocaleString()}</p>
+
+            {/* Payment */}
+            <div className={`p-6 flex flex-col sm:flex-row items-start sm:items-center gap-6 ${paid ? "bg-green-50" : "bg-bauhaus-yellow/20"}`}>
+              <div className="flex items-center gap-3">
+                <IndianRupee className={`w-8 h-8 shrink-0 ${paid ? "text-green-600" : "text-yellow-600"}`} />
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-500 mb-0.5">Payment</p>
+                  <p className={`text-xl font-black uppercase ${paid ? "text-green-700" : "text-bauhaus-black"}`}>
+                    {paid ? "✓ Paid" : "⚠ Payment Pending"}
+                  </p>
+                  {!paid && result.paymentMethod === "in-shop" && (
+                    <p className="text-sm text-gray-600 mt-0.5">Pay at the shop when you collect your print.</p>
+                  )}
+                </div>
+              </div>
+              <div className="sm:ml-auto text-left sm:text-right">
+                <p className="text-xs font-black uppercase tracking-widest text-gray-500 mb-0.5">Amount</p>
+                <p className="text-3xl font-black">{result.price > 0 ? `₹${result.price.toFixed(2)}` : "—"}</p>
+              </div>
             </div>
-            <div className="sm:col-span-2">
-              <p className="text-gray-500 text-sm font-bold uppercase">File Name</p>
-              <p className="break-all font-semibold">
-                {result.fileName.startsWith("[") 
-                  ? (() => { try { return JSON.parse(result.fileName).join(", "); } catch (e) { return result.fileName; } })()
-                  : result.fileName}
-              </p>
+
+            {/* Details */}
+            <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Tracking ID</p>
+                <p className="font-mono font-black text-lg break-all">{result.trackingId}</p>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Date</p>
+                <p className="font-semibold">{new Date(result.createdAt).toLocaleString()}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">File(s)</p>
+                <p className="font-semibold break-all">{formatFileName(result.fileName)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Color Mode</p>
+                <p className="font-semibold">{result.colorMode === "color" ? "🎨 Color Print" : "⬛ Black & White"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Copies</p>
+                <p className="font-semibold">{result.copies}</p>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Print Side</p>
+                <p className="font-semibold">{result.printSide === "double" ? "Double-sided" : "Single-sided"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-1">Pages per Sheet</p>
+                <p className="font-semibold">{result.pagesPerSheet}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-gray-500 text-sm font-bold uppercase">Color Mode</p>
-              <p>{result.colorMode === "color" ? "Color Print" : "Black & White"}</p>
+
+            {/* Payment method */}
+            <div className="p-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+              <div className="flex items-center gap-3">
+                {result.paymentMethod === "razorpay" || result.paymentMethod === "online"
+                  ? <CreditCard className="w-6 h-6 text-bauhaus-blue shrink-0" />
+                  : <Store className="w-6 h-6 shrink-0" />}
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-0.5">Payment Method</p>
+                  <p className="font-bold">{getPaymentLabel(result)}</p>
+                </div>
+              </div>
+              {result.razorpayPaymentId && (
+                <div className="sm:ml-auto min-w-0">
+                  <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-0.5">Payment ID</p>
+                  <p className="font-mono text-sm break-all">{result.razorpayPaymentId}</p>
+                </div>
+              )}
             </div>
+
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

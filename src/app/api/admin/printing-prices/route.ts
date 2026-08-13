@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
+/** Safely extract a number from a MongoDB raw query field (handles EJSON formats). */
+function extractMongoPrice(raw: any): number {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
+  if (typeof raw === "string") { const n = parseFloat(raw); return isNaN(n) ? 0 : n; }
+  if (typeof raw === "object") {
+    if (raw.$numberDecimal !== undefined) { const n = parseFloat(raw.$numberDecimal); return isNaN(n) ? 0 : n; }
+    if (raw.$numberDouble !== undefined)  { const n = parseFloat(raw.$numberDouble);  return isNaN(n) ? 0 : n; }
+    if (raw.$numberInt !== undefined)     { const n = parseInt(raw.$numberInt, 10);   return isNaN(n) ? 0 : n; }
+    if (raw.$numberLong !== undefined)    { const n = parseInt(raw.$numberLong, 10);  return isNaN(n) ? 0 : n; }
+  }
+  return 0;
+}
+
 // Safe dynamic lookup helper
 async function getPricesRaw(): Promise<any[]> {
   try {
@@ -15,7 +29,7 @@ async function getPricesRaw(): Promise<any[]> {
         colorMode: doc.colorMode,
         printSide: doc.printSide,
         layout: doc.layout || "1",
-        price: doc.price
+        price: extractMongoPrice(doc.price)   // ← always a plain number now
       }));
     }
   } catch (err) {

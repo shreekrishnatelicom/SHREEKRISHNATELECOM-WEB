@@ -1,12 +1,8 @@
 import Link from "next/link";
-import { Users, Target, Award, MapPin, Phone, Clock, ArrowRight } from "lucide-react";
+import { Target, ArrowRight } from "lucide-react";
+
 
 export default function AboutPage() {
-  const team = [
-    { name: "Owner / Manager", role: "Shree Krishna Telecom", initial: "SK" },
-    { name: "Print Specialist", role: "Printing & Lamination", initial: "PS" },
-    { name: "Govt. Services", role: "Form Filling & Documentation", initial: "GS" },
-  ];
 
   return (
     <div>
@@ -52,45 +48,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* Story */}
-      <section className="py-14 px-6 bg-gray-50 border-b-4 border-bauhaus-black">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-3xl font-black uppercase mb-6 border-l-8 border-bauhaus-red pl-4">Our Story</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { year: "2010", title: "Founded", desc: "Started as a small internet cafe with 5 computers and a single printer." },
-              { year: "2015", title: "Expanded", desc: "Added government services, lamination, and passport photo services." },
-              { year: "2024", title: "Online", desc: "Launched online PDF upload — customers can now print without a pen drive." },
-            ].map((item) => (
-              <div key={item.year} className="border-4 border-bauhaus-black bg-bauhaus-white p-6">
-                <span className="text-4xl font-black text-bauhaus-red block mb-2">{item.year}</span>
-                <h3 className="text-xl font-black uppercase mb-2">{item.title}</h3>
-                <p className="text-gray-600">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      {/* Team */}
-      <section className="py-14 px-6 border-b-4 border-bauhaus-black">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-3xl font-black uppercase mb-8">Our Team</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {team.map((member, i) => (
-              <div key={member.name} className="border-4 border-bauhaus-black text-center overflow-hidden">
-                <div className={`py-10 text-bauhaus-white text-5xl font-black ${i === 0 ? "bg-bauhaus-blue" : i === 1 ? "bg-bauhaus-red" : "bg-bauhaus-black"}`}>
-                  {member.initial}
-                </div>
-                <div className="p-5">
-                  <p className="font-black uppercase">{member.name}</p>
-                  <p className="text-sm text-gray-500 mt-1">{member.role}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* CTA */}
       <section className="py-14 px-6 text-center">

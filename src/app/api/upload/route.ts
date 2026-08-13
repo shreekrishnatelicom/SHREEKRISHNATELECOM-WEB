@@ -38,6 +38,28 @@ function parsePrice(priceStr: string | null | undefined, defaultVal: number): nu
   return defaultVal;
 }
 
+/**
+ * Safely extract a number from a MongoDB raw query price field.
+ * Handles: plain number, string, MongoDB Extended JSON ($numberDecimal,
+ * $numberDouble, $numberInt, $numberLong).
+ */
+function extractMongoPrice(raw: any): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return isNaN(raw) ? null : raw;
+  if (typeof raw === "string") {
+    const n = parseFloat(raw);
+    return isNaN(n) ? null : n;
+  }
+  if (typeof raw === "object") {
+    // MongoDB Extended JSON formats
+    if (raw.$numberDecimal !== undefined) { const n = parseFloat(raw.$numberDecimal); return isNaN(n) ? null : n; }
+    if (raw.$numberDouble !== undefined) { const n = parseFloat(raw.$numberDouble); return isNaN(n) ? null : n; }
+    if (raw.$numberInt !== undefined)    { const n = parseInt(raw.$numberInt, 10);   return isNaN(n) ? null : n; }
+    if (raw.$numberLong !== undefined)   { const n = parseInt(raw.$numberLong, 10);  return isNaN(n) ? null : n; }
+  }
+  return null;
+}
+
 function getMimeTypeByExt(ext: string): string {
   switch (ext) {
     case ".pdf": return "application/pdf";
@@ -291,47 +313,52 @@ export async function POST(req: NextRequest) {
     } else {
       // Print Request pricing calculation
       const layoutType = pagesPerSheetVal >= 2 ? "2+" : "1";
-      let priceRecord = null;
+
+      console.log("[PRICE] Looking up price for:", { serviceType, colorMode, printSide, layoutType });
+
+      // Fetch ALL pricing records (same pattern as admin API — guaranteed to work)
+      // then filter in JS. This avoids $runCommandRaw filter compatibility issues.
+      let allPrices: any[] = [];
       try {
         if ((prisma as any).printingPrice) {
-          priceRecord = await (prisma as any).printingPrice.findFirst({
-            where: { serviceType, colorMode, printSide, layout: layoutType }
-          });
-          if (!priceRecord && layoutType === "2+") {
-            priceRecord = await (prisma as any).printingPrice.findFirst({
-              where: { serviceType, colorMode, printSide, layout: "1" }
-            });
-          }
+          allPrices = await (prisma as any).printingPrice.findMany();
         }
-      } catch (e) {
-        console.warn("Prisma printingPrice client property not available, using raw query:", e);
-      }
+      } catch { /* stale client — fall through */ }
 
-      if (!priceRecord) {
+      if (allPrices.length === 0) {
         try {
-          let rawResult: any = await prisma.$runCommandRaw({
-            find: "PrintingPrice",
-            filter: { serviceType, colorMode, printSide, layout: layoutType }
-          });
-          let docs = (rawResult as any)?.cursor?.firstBatch || [];
-          if (docs.length > 0) {
-            priceRecord = docs[0];
-          } else if (layoutType === "2+") {
-            rawResult = await prisma.$runCommandRaw({
-              find: "PrintingPrice",
-              filter: { serviceType, colorMode, printSide, layout: "1" }
-            });
-            docs = (rawResult as any)?.cursor?.firstBatch || [];
-            if (docs.length > 0) {
-              priceRecord = docs[0];
-            }
-          }
+          const rawResult: any = await prisma.$runCommandRaw({ find: "PrintingPrice" });
+          const docs = rawResult?.cursor?.firstBatch || [];
+          allPrices = docs.map((doc: any) => ({
+            serviceType: doc.serviceType,
+            colorMode: doc.colorMode,
+            printSide: doc.printSide,
+            layout: doc.layout || "1",
+            price: extractMongoPrice(doc.price),
+          }));
         } catch (rawErr) {
-          console.error("Raw upload query failed:", rawErr);
+          console.error("[PRICE] Raw fetch failed:", rawErr);
         }
       }
 
-      const rateVal = priceRecord?.price ?? (
+      console.log("[PRICE] Total pricing records fetched:", allPrices.length);
+
+      // Match: exact layout first, then fall back to layout "1"
+      const findMatch = (lt: string) =>
+        allPrices.find(
+          (p: any) =>
+            p.serviceType === serviceType &&
+            p.colorMode === colorMode &&
+            p.printSide === printSide &&
+            p.layout === lt
+        );
+
+      const priceRecord = findMatch(layoutType) ?? (layoutType === "2+" ? findMatch("1") : null);
+
+      console.log("[PRICE] Matched record:", priceRecord ?? "none — using fallback");
+
+      const extractedRate = priceRecord ? extractMongoPrice(priceRecord.price) : null;
+      const rateVal = extractedRate ?? (
         colorMode === "color"
           ? (printSide === "double" ? (layoutType === "2+" ? 14 : 18) : (layoutType === "2+" ? 8 : 10))
           : (printSide === "double" ? (layoutType === "2+" ? 2.5 : 3.5) : (layoutType === "2+" ? 1.5 : 2))
@@ -339,7 +366,9 @@ export async function POST(req: NextRequest) {
 
       const printedSides = Math.ceil(totalPageCount / pagesPerSheetVal);
       const sheets = printSide === "double" ? Math.ceil(printedSides / 2) : printedSides;
-      calculatedPrice = rateVal * sheets * copiesVal;
+      calculatedPrice = Math.round(rateVal * sheets * copiesVal * 100) / 100;
+
+      console.log("[PRICE] Final:", { rateVal, totalPageCount, sheets, copiesVal, calculatedPrice });
     }
 
     const trackingId = generateTrackingId();
