@@ -47,8 +47,11 @@ interface PrintRequest {
   price?: number | null;
   paymentMethod?: string;
   razorpayPaymentId?: string | null;
+  couponCode?: string | null;
+  discountPercent?: number | null;
   createdAt: string;
 }
+
 
 const STATUS_CFG: Record<Status, { cls: string; label: string }> = {
   pending:            { cls: "bg-bauhaus-yellow text-bauhaus-black border-bauhaus-black", label: "Pending" },
@@ -248,7 +251,13 @@ export default function AdminRequests() {
               🏪 Pay at Shop
             </span>
           )}
+          {req.couponCode && (
+            <span className="px-2 py-0.5 text-xs font-black bg-green-100 text-green-800 border-2 border-green-800 uppercase">
+              🎟 Coupon: {req.couponCode} ({req.discountPercent}% OFF)
+            </span>
+          )}
         </div>
+
 
         <div className="space-y-2 mb-3">
           {parseFiles(req.fileUrl, req.fileName).map((file, idx) => {

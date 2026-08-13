@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, FileText, Printer, LogOut, Megaphone, Package, Settings, Layers, Tag, Calculator, X } from "lucide-react";
+import { LayoutDashboard, FileText, Printer, LogOut, Megaphone, Package, Settings, Layers, Tag, Calculator, X, Ticket } from "lucide-react";
 import { useState, useEffect } from "react";
 import { auth } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
@@ -74,6 +74,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       items: [
         { href: "/admin/services",     label: "Manage Services",   icon: Package },
         { href: "/admin/printing-prices", label: "Printing Prices", icon: Tag },
+        { href: "/admin/coupons",      label: "Coupons",           icon: Ticket },
         { href: "/admin/calculator",   label: "Store Calculator",  icon: Calculator },
       ]
     },
@@ -85,6 +86,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       ]
     }
   ];
+
 
   return (
     <div className="flex flex-col md:flex-row min-h-[calc(100vh-64px)] bg-bauhaus-white text-bauhaus-black relative">

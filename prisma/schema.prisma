@@ -48,9 +48,12 @@ model PrintRequest {
   razorpayOrderId     String?
   razorpayPaymentId   String?
   razorpaySignature   String?
+  couponCode          String?
+  discountPercent     Float?   @default(0.0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
 
 model Service {
   id                  String   @id @default(auto()) @map("_id") @db.ObjectId
@@ -132,3 +135,15 @@ model FileChunk {
 
   @@index([fileId])
 }
+
+model Coupon {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  code        String   @unique
+  discountPct Float    // e.g. 10.0 for 10% off
+  minPrice    Float    @default(0.0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+

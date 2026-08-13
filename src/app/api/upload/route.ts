@@ -371,6 +371,60 @@ export async function POST(req: NextRequest) {
       console.log("[PRICE] Final:", { rateVal, totalPageCount, sheets, copiesVal, calculatedPrice });
     }
 
+    // Coupon code validation & calculation
+    const couponCode = (formData.get("couponCode") as string) || "";
+    let appliedCouponCode: string | null = null;
+    let discountPercent = 0.0;
+
+    if (couponCode && calculatedPrice > 0) {
+      const cleanCoupon = couponCode.trim().toUpperCase();
+      let coupon: any = null;
+      try {
+        if ((prisma as any).coupon) {
+          coupon = await (prisma as any).coupon.findUnique({
+            where: { code: cleanCoupon }
+          });
+        }
+      } catch {}
+
+      if (!coupon) {
+        try {
+          const rawResult: any = await prisma.$runCommandRaw({
+            find: "Coupon",
+            filter: { code: cleanCoupon }
+          });
+          const docs = rawResult?.cursor?.firstBatch || [];
+          if (docs.length > 0) {
+            const doc = docs[0];
+            coupon = {
+              code: doc.code,
+              discountPct: extractMongoPrice(doc.discountPct) ?? 0,
+              minPrice: extractMongoPrice(doc.minPrice) ?? 0,
+              isActive: doc.isActive !== false
+            };
+          }
+        } catch (rawErr) {
+          console.error("[COUPON] Raw validate failed:", rawErr);
+        }
+      }
+
+      if (coupon && coupon.isActive) {
+        const minPriceLimit = extractMongoPrice(coupon.minPrice) ?? 0;
+        if (calculatedPrice < minPriceLimit) {
+          console.log(`[COUPON] Code ${cleanCoupon} not applied because calculatedPrice ₹${calculatedPrice} is less than minPrice limit ₹${minPriceLimit}`);
+        } else {
+          appliedCouponCode = coupon.code;
+          discountPercent = coupon.discountPct;
+          const discountAmount = Math.round(calculatedPrice * (discountPercent / 100) * 100) / 100;
+          calculatedPrice = Math.max(0, Math.round((calculatedPrice - discountAmount) * 100) / 100);
+          console.log(`[COUPON] Applied ${coupon.code} (${discountPercent}% off). Discount: ₹${discountAmount}. Final Price: ₹${calculatedPrice}`);
+        }
+      } else {
+        console.log(`[COUPON] Code ${cleanCoupon} was provided but is invalid or inactive`);
+      }
+    }
+
+
     const trackingId = generateTrackingId();
 
     let userId = null;
@@ -436,15 +490,24 @@ export async function POST(req: NextRequest) {
         paymentMethod: paymentMethod === "online" ? "online" : "in-shop",
         price: calculatedPrice,
         razorpayOrderId,
+        couponCode: appliedCouponCode,
+        discountPercent,
         ...(userId && { userId }),
       };
 
       try {
         await prisma.printRequest.create({ data: dataPayload });
       } catch (err: any) {
-        if (err.message && err.message.includes("serviceType")) {
-          console.warn("Stale Prisma Client: Retrying print request creation without serviceType field.");
+        const isMissingFieldErr = err.message && (
+          err.message.includes("serviceType") ||
+          err.message.includes("couponCode") ||
+          err.message.includes("discountPercent")
+        );
+        if (isMissingFieldErr) {
+          console.warn("Stale Prisma Client: Retrying print request creation without new fields.");
           delete dataPayload.serviceType;
+          delete dataPayload.couponCode;
+          delete dataPayload.discountPercent;
           await prisma.printRequest.create({ data: dataPayload });
         } else {
           throw err;
@@ -453,6 +516,7 @@ export async function POST(req: NextRequest) {
     } catch (dbErr) {
       throw dbErr;
     }
+
 
     const receiptHtml = generateReceiptHtml(
       trackingId,

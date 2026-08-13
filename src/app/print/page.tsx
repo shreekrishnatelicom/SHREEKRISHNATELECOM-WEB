@@ -84,6 +84,12 @@ export default function PrintService() {
   const [pricingTable, setPricingTable] = useState<any[]>([]);
   const [confirmedPrice, setConfirmedPrice] = useState<number | null>(null);
 
+  // Coupon states
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountPct: number; minPrice: number } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
+
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -143,8 +149,8 @@ export default function PrintService() {
       .catch(() => {});
   }, []);
 
-  // Compute estimated price based on current options
-  const estimatedPrice = (() => {
+  // Compute base price (before coupon)
+  const estimatedBasePrice = (() => {
     if (files.length === 0) return null;
     const copiesNum = Number(copies) || 1;
     const layoutType = pagesPerSheet >= 2 ? "2+" : "1";
@@ -175,9 +181,57 @@ export default function PrintService() {
     return Math.round(rate * sheets * copiesNum * 100) / 100;
   })();
 
+  // Compute estimated price after coupon discount
+  const estimatedPrice = (() => {
+    const base = estimatedBasePrice;
+    if (base === null) return null;
+    if (appliedCoupon) {
+      if (appliedCoupon.minPrice && base < appliedCoupon.minPrice) {
+        return base;
+      }
+      const discount = Math.round(base * (appliedCoupon.discountPct / 100) * 100) / 100;
+      return Math.max(0, Math.round((base - discount) * 100) / 100);
+    }
+    return base;
+  })();
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setIsValidatingCoupon(true);
+    setCouponError(null);
+    try {
+      const res = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: couponCode })
+      });
+      const data = await res.json();
+      if (data.valid) {
+        const currentBase = estimatedBasePrice || 0;
+        if (data.minPrice && currentBase < data.minPrice) {
+          setCouponError(`This coupon requires a minimum order of ₹${data.minPrice.toFixed(2)} (Current: ₹${currentBase.toFixed(2)})`);
+          setAppliedCoupon(null);
+        } else {
+          setAppliedCoupon({ code: data.code, discountPct: data.discountPct, minPrice: data.minPrice });
+          setConfirmedPrice(null);
+        }
+      } else {
+        setCouponError(data.message || "Invalid coupon");
+        setAppliedCoupon(null);
+      }
+    } catch (err) {
+      setCouponError("Validation failed");
+      setAppliedCoupon(null);
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  };
+
+
   const triggerFileInput = () => {
     document.getElementById("file-input-element")?.click();
   };
+
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -357,6 +411,10 @@ export default function PrintService() {
     // Prepend customer name, email and phone to notes field
     const finalNotes = `[Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
     fd.append("notes", finalNotes);
+    if (appliedCoupon) {
+      fd.append("couponCode", appliedCoupon.code);
+    }
+
 
     try {
       setUploadProgress(0);
@@ -895,6 +953,68 @@ export default function PrintService() {
           </div>
         )}
 
+        {/* Coupon Code section */}
+        {files.length > 0 && (
+          <div className="border-4 border-bauhaus-black p-6 bg-gray-50 space-y-3 shadow-[4px_4px_0_0_#1a1a1a]">
+            <div className="flex items-center gap-2 border-b-2 border-bauhaus-black pb-2 mb-2">
+              <span className="font-black uppercase text-sm">🎟 Have a Coupon Code?</span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="6-DIGIT CODE"
+                value={couponCode}
+                onChange={(e) => {
+                  setCouponCode(e.target.value.toUpperCase().slice(0, 6));
+                  setCouponError(null);
+                }}
+                disabled={isValidatingCoupon || !!appliedCoupon}
+                className="flex-1 border-4 border-bauhaus-black p-3 font-mono font-black uppercase text-center outline-none bg-white focus:border-bauhaus-blue disabled:bg-gray-100"
+              />
+              {appliedCoupon ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAppliedCoupon(null);
+                    setCouponCode("");
+                    setConfirmedPrice(null);
+                  }}
+                  className="bg-bauhaus-red text-white border-4 border-bauhaus-black px-4 font-black uppercase text-xs hover:bg-red-700 transition-all shadow-[2px_2px_0_0_#1a1a1a] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+                >
+                  Remove
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleApplyCoupon}
+                  disabled={isValidatingCoupon || !couponCode.trim()}
+                  className="bg-bauhaus-blue text-white border-4 border-bauhaus-black px-6 font-black uppercase text-xs hover:bg-blue-600 transition-all disabled:opacity-50 shadow-[2px_2px_0_0_#1a1a1a] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+                >
+                  {isValidatingCoupon ? "Checking..." : "Apply"}
+                </button>
+              )}
+            </div>
+            {couponError && (
+              <p className="text-xs font-bold text-bauhaus-red">{couponError}</p>
+            )}
+            {appliedCoupon && (() => {
+              const isBelowMin = appliedCoupon.minPrice && estimatedBasePrice !== null && (estimatedBasePrice < appliedCoupon.minPrice);
+              if (isBelowMin) {
+                return (
+                  <p className="text-xs font-black text-bauhaus-red uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
+                    ⚠️ Coupon Code not applied: Requires min. order of ₹{appliedCoupon.minPrice.toFixed(2)} (Current: ₹{estimatedBasePrice?.toFixed(2)})
+                  </p>
+                );
+              }
+              return (
+                <p className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1.5">
+                  🎉 Coupon Applied: {appliedCoupon.code} ({appliedCoupon.discountPct}% OFF!)
+                </p>
+              );
+            })()}
+          </div>
+        )}
+
         {/* Price Summary */}
         {files.length > 0 && (
           <div className="border-4 border-bauhaus-black bg-bauhaus-yellow p-5 shadow-[4px_4px_0_0_#1a1a1a]">
@@ -908,7 +1028,12 @@ export default function PrintService() {
                     ? `₹${estimatedPrice.toFixed(2)}`
                     : "—"}
                 </p>
-                <p className="text-[10px] text-gray-600 mt-0.5">
+                {appliedCoupon && estimatedBasePrice !== null && (!appliedCoupon.minPrice || estimatedBasePrice >= appliedCoupon.minPrice) && (
+                  <p className="text-[10px] text-green-800 font-black uppercase tracking-wider mt-1.5 bg-green-100 inline-block px-2 py-0.5 border-2 border-green-800 shadow-[1px_1px_0_0_#065f46]">
+                    Discount applied ({appliedCoupon.discountPct}% off)
+                  </p>
+                )}
+                <p className="text-[10px] text-gray-600 mt-1.5">
                   {confirmedPrice !== null
                     ? "Exact amount charged after page count"
                     : "Estimate based on 1 page/file — exact amount calculated after upload"}
@@ -922,6 +1047,8 @@ export default function PrintService() {
             </div>
           </div>
         )}
+
+
 
         {/* Upload Progress Bar */}
         {uploadProgress !== null && (
