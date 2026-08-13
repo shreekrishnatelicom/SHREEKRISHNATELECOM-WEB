@@ -1,0 +1,773 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Upload, File as FileIcon, CheckCircle, Printer, Palette, BookOpen, User as UserIcon } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged, User } from "firebase/auth";
+import Script from "next/script";
+
+type ColorMode = "bw" | "color";
+type PrintSide = "single" | "double";
+type PagesPerSheet = number;
+
+function uploadWithProgress(
+  url: string,
+  formData: FormData,
+  onProgress: (percent: number) => void
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText));
+        } catch (e) {
+          resolve(xhr.responseText);
+        }
+      } else {
+        try {
+          const errData = JSON.parse(xhr.responseText);
+          reject(new Error(errData.error || `Upload failed with status ${xhr.status}`));
+        } catch {
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Network error during upload."));
+    };
+
+    xhr.send(formData);
+  });
+}
+
+export default function PrintService() {
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const [file, setFile]               = useState<File | null>(null);
+  const [serviceType, setServiceType] = useState<"study-material" | "others">("others");
+  const [colorMode, setColorMode]     = useState<ColorMode>("bw");
+  const [copies, setCopies]           = useState<number | "">(1);
+  const [printSide, setPrintSide]     = useState<PrintSide>("single");
+  const [pagesPerSheet, setPagesPerSheet] = useState<number>(1);
+  const [notes, setNotes]             = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [trackingId, setTrackingId]   = useState<string | null>(null);
+  const [error, setError]             = useState<string | null>(null);
+  const [isDragging, setIsDragging]   = useState(false);
+
+  // Print Payment states
+  const [onlineEnabled, setOnlineEnabled] = useState(true);
+  const [offlineEnabled, setOfflineEnabled] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState<"online" | "in-shop">("in-shop");
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        setName(currentUser.displayName || currentUser.email?.split("@")[0] || "");
+        setEmail(currentUser.email || "");
+
+        // Fetch DB user profile to get phone number
+        try {
+          const res = await fetch("/api/auth/profile");
+          if (res.ok) {
+            const data = await res.json();
+            setName(data.name || currentUser.displayName || "");
+            setPhone(data.phone || "");
+          }
+        } catch (e) {
+          console.error("Failed to load user profile phone:", e);
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const fetchPaymentSettings = async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (res.ok) {
+          const data = await res.json();
+          const online = data.allowOnlinePayment ?? true;
+          const offline = data.allowOfflinePayment ?? true;
+          setOnlineEnabled(online);
+          setOfflineEnabled(offline);
+          
+          if (online && !offline) {
+            setPaymentMethod("online");
+          } else {
+            setPaymentMethod("in-shop");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load payment settings:", err);
+      }
+    };
+    fetchPaymentSettings();
+  }, []);
+
+  const handleFile = (f: File | null) => {
+    if (!f) return;
+    if (f.type !== "application/pdf") { setError("Only PDF files are supported."); return; }
+    if (f.size > 50 * 1024 * 1024) { setError("File is too large. Max size is 50MB for database storage."); return; }
+    setError(null);
+    setFile(f);
+  };
+
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value, 10);
+    setPagesPerSheet(val);
+  };
+
+  const downloadReceipt = async (data: any) => {
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a6",
+      });
+
+      // Draw card border
+      doc.setDrawColor(26, 26, 26);
+      doc.setLineWidth(1.5);
+      doc.rect(2, 2, 101, 144);
+
+      // Blue Header banner
+      doc.setFillColor(0, 72, 143);
+      doc.rect(2.75, 2.75, 99.5, 20, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("SHREE KRISHNA TELECOM", 52.5, 10, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text("PRINT RECEIPT & INVOICE", 52.5, 15, { align: "center" });
+
+      // Yellow Tracking ID area
+      doc.setFillColor(246, 196, 0);
+      doc.rect(10, 28, 85, 22, "F");
+      doc.setDrawColor(26, 26, 26);
+      doc.setLineWidth(1);
+      doc.rect(10, 28, 85, 22, "D");
+
+      doc.setTextColor(85, 85, 85);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.text("YOUR TRACKING ID", 52.5, 34, { align: "center" });
+
+      doc.setTextColor(26, 26, 26);
+      doc.setFont("courier", "bold");
+      doc.setFontSize(18);
+      doc.text(data.trackingId, 52.5, 43, { align: "center" });
+
+      // Red Price box
+      doc.setFillColor(224, 22, 43);
+      doc.rect(10, 54, 85, 12, "F");
+      doc.rect(10, 54, 85, 12, "D");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text(`TOTAL AMOUNT: Rs. ${(data.price || 0).toFixed(2)}`, 52.5, 61.5, { align: "center" });
+
+      // Details list
+      doc.setTextColor(26, 26, 26);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+
+      let y = 72;
+      const drawRow = (label: string, value: string) => {
+        doc.setTextColor(136, 136, 136);
+        doc.setFont("helvetica", "bold");
+        doc.text(label.toUpperCase(), 12, y);
+
+        doc.setTextColor(26, 26, 26);
+        doc.setFont("helvetica", "bold");
+        const valText = value.length > 28 ? value.substring(0, 25) + "..." : value;
+        doc.text(valText, 93, y, { align: "right" });
+
+        doc.setDrawColor(238, 238, 238);
+        doc.setLineWidth(0.2);
+        doc.line(10, y + 1.5, 95, y + 1.5);
+        y += 5.5;
+      };
+
+      drawRow("File Name", data.fileName || (file ? file.name : ""));
+      drawRow("Service Type", serviceType === "study-material" ? "Study Material" : "Others");
+      drawRow("Page Count", `${data.pageCount || 1} pages`);
+      drawRow("Color Mode", colorMode === "color" ? "Full Color" : "B&W");
+      drawRow("Print Side", printSide === "double" ? "Double-sided" : "Single-sided");
+      drawRow("Layout", pagesPerSheet > 1 ? `${pagesPerSheet}-in-1` : "Normal");
+      drawRow("Copies", String(copies));
+      drawRow("Date", new Date().toLocaleDateString("en-IN"));
+      
+      const isOnline = paymentMethod === "online";
+      drawRow("Status", isOnline ? "Payment Done" : "Pending Pay at Shop");
+      drawRow("Payment Method", isOnline ? "Online (Razorpay)" : "Pay at Shop (Cash/UPI)");
+      
+      if (isOnline && data.paymentId) {
+        drawRow("Payment ID", data.paymentId);
+      }
+
+      // Warning Footer Banner
+      const bannerY = (isOnline && data.paymentId) ? 134 : 128;
+      doc.setFillColor(224, 22, 43);
+      doc.rect(10, bannerY, 85, 7, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.text(isOnline ? "SHOW RECEIPT AT COUNTER TO COLLECT PRINTS" : "SHOW TRACKING ID AT COUNTER TO PAY & COLLECT", 52.5, bannerY + 4.5, { align: "center" });
+
+      doc.save(`SKT-Receipt-${data.trackingId}.pdf`);
+    } catch (pdfErr) {
+      console.error("PDF generation failed:", pdfErr);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) { setError("Please select a PDF file."); return; }
+    if (!name.trim()) { setError("Please enter your name."); return; }
+    setIsSubmitting(true);
+    setError(null);
+
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("colorMode", colorMode);
+    fd.append("copies", String(copies));
+    fd.append("printSide", printSide);
+    fd.append("pagesPerSheet", String(pagesPerSheet));
+    fd.append("serviceType", serviceType);
+    fd.append("paymentMethod", paymentMethod);
+    
+    // Prepend customer name, email and phone to notes field
+    const finalNotes = `[Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
+    fd.append("notes", finalNotes);
+
+    try {
+      setUploadProgress(0);
+      const data = await uploadWithProgress("/api/upload", fd, (pct) => {
+        setUploadProgress(pct);
+      });
+      setUploadProgress(null);
+
+      // Handle Razorpay Online payment flow
+      if (paymentMethod === "online" && data.razorpayOrderId) {
+        const options = {
+          key: data.razorpayKeyId,
+          amount: data.amount,
+          currency: "INR",
+          name: "Shree Krishna Telecom",
+          description: `Print Request - ${data.trackingId}`,
+          order_id: data.razorpayOrderId,
+          handler: async function (response: any) {
+            setIsSubmitting(true);
+            setIsVerifyingPayment(true);
+            try {
+              const verifyRes = await fetch("/api/payment/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  razorpayPaymentId: response.razorpay_payment_id,
+                  razorpayOrderId: response.razorpay_order_id,
+                  razorpaySignature: response.razorpay_signature,
+                }),
+              });
+              
+              if (!verifyRes.ok) {
+                const verifyData = await verifyRes.json();
+                throw new Error(verifyData.error || "Payment verification failed.");
+              }
+              
+              setTrackingId(data.trackingId);
+              downloadReceipt({
+                ...data,
+                paymentId: response.razorpay_payment_id,
+              });
+            } catch (err: any) {
+              setUploadProgress(null);
+              setError(err.message || "Payment verification failed. Please contact support.");
+            } finally {
+              setIsSubmitting(false);
+              setIsVerifyingPayment(false);
+            }
+          },
+          prefill: {
+            name: name,
+            email: email,
+            contact: phone,
+          },
+          notes: {
+            trackingId: data.trackingId,
+          },
+          theme: {
+            color: "#00488f",
+          },
+          modal: {
+            ondismiss: function() {
+              setIsSubmitting(false);
+              setError("Payment was cancelled. Request not completed.");
+            }
+          }
+        };
+
+        if (data.razorpayKeyId === "rzp_test_placeholder") {
+          const simulate = confirm(
+            `Razorpay is in Test/Simulated Mode.\nClick OK to simulate a successful payment for Tracking ID: ${data.trackingId}.\nClick Cancel to simulate a cancelled checkout.`
+          );
+          if (simulate) {
+            setIsSubmitting(true);
+            setIsVerifyingPayment(true);
+            const mockPaymentId = `pay_${Math.random().toString(36).substring(2, 11)}`;
+            try {
+              const verifyRes = await fetch("/api/payment/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  razorpayPaymentId: mockPaymentId,
+                  razorpayOrderId: data.razorpayOrderId,
+                  razorpaySignature: "mock_signature_for_test",
+                }),
+              });
+              if (!verifyRes.ok) throw new Error("Payment verification failed.");
+              setTrackingId(data.trackingId);
+              downloadReceipt({
+                ...data,
+                paymentId: mockPaymentId,
+              });
+            } catch (err: any) {
+              setUploadProgress(null);
+              setError("Mock payment verification failed.");
+            } finally {
+              setIsSubmitting(false);
+              setIsVerifyingPayment(false);
+            }
+          } else {
+            setIsSubmitting(false);
+            setError("Simulated payment cancelled.");
+          }
+          return;
+        }
+
+        const rzp = new (window as any).Razorpay(options);
+        rzp.open();
+        return;
+      }
+
+      // Offline flow directly sets success
+      setTrackingId(data.trackingId);
+      downloadReceipt(data);
+    } catch (err: any) {
+      setUploadProgress(null);
+      setError(err.message || "Something went wrong.");
+    } finally {
+      if (paymentMethod !== "online") {
+        setIsSubmitting(false);
+      }
+    }
+  };
+
+  const Step = ({ n, label, color }: { n: string; label: string; color: string }) => (
+    <div className={`flex items-center gap-3 text-lg font-black uppercase mb-4 ${color}`}>
+      <span className={`border-4 border-bauhaus-black w-9 h-9 flex items-center justify-center font-black text-sm shrink-0 ${color}`}>{n}</span>
+      <span>{label}</span>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-8 bg-bauhaus-white">
+        <p className="font-bold uppercase text-gray-400 text-sm animate-pulse">Checking credentials...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-8 bg-bauhaus-white">
+        <div className="max-w-md w-full border-4 border-bauhaus-black bg-bauhaus-white shadow-[8px_8px_0_0_#1a1a1a] p-8 text-center">
+          <Printer className="w-16 h-16 mx-auto text-bauhaus-red mb-6" />
+          <h2 className="text-3xl font-black uppercase mb-4">Need Login to Print</h2>
+          <p className="text-gray-600 font-bold mb-8">
+            You need to log in to submit a print request.
+          </p>
+          <Link
+            href="/login?redirect=/print"
+            className="block w-full bg-bauhaus-blue text-bauhaus-white border-4 border-bauhaus-black py-4 font-black uppercase tracking-wider hover:bg-blue-700 transition-colors shadow-[4px_4px_0_0_#1a1a1a] active:translate-x-1 active:translate-y-1 active:shadow-none text-center"
+          >
+            Go to Login Page
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (trackingId) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-8">
+        <div className="max-w-lg w-full border-4 border-bauhaus-black bg-bauhaus-white shadow-[10px_10px_0_0_#1a1a1a] text-center">
+          <div className="bg-green-500 border-b-4 border-bauhaus-black p-8">
+            <CheckCircle className="w-16 h-16 mx-auto text-white" />
+          </div>
+          <div className="p-8">
+            <h1 className="text-3xl font-black uppercase mb-2">Request Submitted!</h1>
+            <p className="text-gray-500 mb-6">Come to the shop, show your Tracking ID, pay and collect.</p>
+            <div className="bg-bauhaus-yellow border-4 border-bauhaus-black p-5 mb-6">
+              <p className="text-xs font-black uppercase tracking-widest text-gray-600 mb-2">Tracking ID</p>
+              <p className="text-4xl font-mono font-black">{trackingId}</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-6 text-sm">
+              <div className="bg-gray-100 border-2 border-bauhaus-black p-3 text-center">
+                <p className="text-xs text-gray-500 uppercase font-bold mb-1">Mode</p>
+                <p className="font-black">{colorMode === "color" ? "Color" : "B&W"}</p>
+              </div>
+              <div className="bg-gray-100 border-2 border-bauhaus-black p-3 text-center">
+                <p className="text-xs text-gray-500 uppercase font-bold mb-1">Copies</p>
+                <p className="font-black">{copies}</p>
+              </div>
+              <div className="bg-gray-100 border-2 border-bauhaus-black p-3 text-center">
+                <p className="text-xs text-gray-500 uppercase font-bold mb-1">Side</p>
+                <p className="font-black capitalize">{printSide}</p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mb-6">📄 Receipt auto-downloaded to your device.</p>
+            <div className="flex gap-3">
+              <Link href="/track" className="flex-1 bg-bauhaus-black text-bauhaus-white border-4 border-bauhaus-black py-3 font-bold uppercase text-sm text-center hover:bg-gray-800 transition-colors">
+                Track
+              </Link>
+              <button onClick={() => { setTrackingId(null); setFile(null); setCopies(1); }} className="flex-1 border-4 border-bauhaus-black py-3 font-bold uppercase text-sm hover:bg-gray-100 transition-colors">
+                New Request
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-10">
+      {/* Page Header */}
+      <div className="flex items-center gap-4 bg-bauhaus-blue text-bauhaus-white border-4 border-bauhaus-black p-6 mb-0">
+        <Printer className="w-10 h-10 shrink-0" />
+        <div>
+          <h1 className="text-3xl font-black uppercase leading-none">Print Request</h1>
+          <p className="text-sm opacity-70 mt-0.5">Upload PDF → Choose options → Pay in shop</p>
+        </div>
+      </div>
+
+      <form
+        onSubmit={handleSubmit}
+        className="border-4 border-t-0 border-bauhaus-black bg-bauhaus-white p-8 space-y-8 shadow-[8px_8px_0_0_#1a1a1a]"
+      >
+        {error && (
+          <div className="bg-bauhaus-red text-bauhaus-white font-bold p-4 border-4 border-bauhaus-black text-sm uppercase flex items-center gap-2">
+            ⚠ {error}
+          </div>
+        )}
+
+        {/* 1. Customer Details */}
+        <div>
+          <Step n="1" label="Your Details" color="bg-bauhaus-yellow text-black" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="relative">
+              <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your Full Name"
+                required
+                className="w-full border-4 border-bauhaus-black pl-12 pr-4 py-3 text-lg font-bold outline-none focus:border-bauhaus-blue"
+              />
+            </div>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">@</span>
+              <input
+                type="email"
+                value={email}
+                readOnly
+                className="w-full border-4 border-bauhaus-black pl-12 pr-4 py-3 text-lg font-bold outline-none bg-gray-100 text-gray-500 cursor-not-allowed"
+                title="Email address is locked and cannot be edited"
+              />
+            </div>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400">#</span>
+              <input
+                type="tel"
+                value={phone}
+                readOnly
+                placeholder="Phone Number"
+                className="w-full border-4 border-bauhaus-black pl-12 pr-4 py-3 text-lg font-bold outline-none bg-gray-100 text-gray-500 cursor-not-allowed"
+                title="Phone number is locked and cannot be edited"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 2. Upload PDF */}
+        <div>
+          <Step n="2" label="Upload PDF" color="bg-bauhaus-red text-white" />
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFile(e.dataTransfer.files[0]); }}
+            className={`relative border-4 border-dashed p-10 text-center cursor-pointer transition-all ${isDragging ? "border-bauhaus-blue bg-blue-50 scale-[1.01]" : "border-bauhaus-black hover:bg-gray-50"}`}
+          >
+            <input type="file" accept=".pdf" onChange={(e) => handleFile(e.target.files?.[0] || null)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" required />
+            {file ? (
+              <div className="flex flex-col items-center">
+                <FileIcon className="w-12 h-12 mb-3 text-bauhaus-blue" />
+                <p className="font-bold truncate max-w-xs">{file.name}</p>
+                <p className="text-xs text-gray-400 mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <span className="mt-2 text-xs font-bold uppercase text-green-600 bg-green-50 border border-green-300 px-2 py-0.5">✓ Ready to upload</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center">
+                <Upload className="w-12 h-12 mb-3 text-gray-300" />
+                <p className="font-bold uppercase">Drag & Drop or Click to Browse</p>
+                <p className="text-xs text-gray-400 mt-1">PDF files only • Max 50MB</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 3. Service Type */}
+        <div>
+          <Step n="3" label="Service Type" color="bg-bauhaus-black text-white" />
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { val: "others",         label: "Others / Standard", sub: "Regular document print" },
+              { val: "study-material", label: "Study Material",    sub: "Syllabus, notes, books (Discounts)" },
+            ].map((opt) => (
+              <label key={opt.val} className={`border-4 cursor-pointer p-5 text-center font-black uppercase transition-all ${serviceType === opt.val ? "bg-bauhaus-black text-white border-bauhaus-black shadow-[4px_4px_0_0_#e0162b]" : "border-bauhaus-black bg-gray-50 hover:bg-gray-100"}`}>
+                <input type="radio" name="serviceType" value={opt.val} checked={serviceType === opt.val} onChange={() => setServiceType(opt.val as any)} className="hidden" />
+                <BookOpen className="w-6 h-6 mx-auto mb-2" />
+                <p>{opt.label}</p>
+                <p className="text-xs font-medium opacity-60 normal-case mt-0.5">{opt.sub}</p>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* 4. Color Mode */}
+        <div>
+          <Step n="4" label="Color Mode" color="bg-bauhaus-blue text-white" />
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { val: "bw",    label: "Black & White", sub: "Standard, affordable" },
+              { val: "color", label: "Full Color",    sub: "Vibrant, premium" },
+            ].map((opt) => (
+              <label key={opt.val} className={`border-4 cursor-pointer p-5 text-center font-black uppercase transition-all ${colorMode === opt.val ? (opt.val === "bw" ? "bg-bauhaus-black text-white border-bauhaus-black shadow-[4px_4px_0_0_#e0162b]" : "bg-bauhaus-yellow border-bauhaus-black shadow-[4px_4px_0_0_#1a1a1a]") : "border-bauhaus-black bg-gray-50 hover:bg-gray-100"}`}>
+                <input type="radio" name="colorMode" value={opt.val} checked={colorMode === opt.val as ColorMode} onChange={() => setColorMode(opt.val as ColorMode)} className="hidden" />
+                <Palette className="w-6 h-6 mx-auto mb-2" />
+                <p>{opt.label}</p>
+                <p className="text-xs font-medium opacity-60 normal-case mt-0.5">{opt.sub}</p>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* 5. Print Side */}
+        <div>
+          <Step n="5" label="Print Side" color="bg-bauhaus-yellow text-black" />
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { val: "single", label: "Single Side", sub: "Print on one side only", icon: BookOpen },
+              { val: "double", label: "Double Side", sub: "Print on both sides", icon: BookOpen },
+            ].map((opt) => (
+              <label key={opt.val} className={`border-4 cursor-pointer p-5 text-center font-black uppercase transition-all ${printSide === opt.val ? "bg-bauhaus-blue text-white border-bauhaus-black shadow-[4px_4px_0_0_#1a1a1a]" : "border-bauhaus-black bg-gray-50 hover:bg-gray-100"}`}>
+                <input type="radio" name="printSide" value={opt.val} checked={printSide === opt.val as PrintSide} onChange={() => setPrintSide(opt.val as PrintSide)} className="hidden" />
+                <opt.icon className="w-6 h-6 mx-auto mb-2" />
+                <p>{opt.label}</p>
+                <p className="text-xs font-medium opacity-60 normal-case mt-0.5">{opt.sub}</p>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* 6. Pages Per Sheet */}
+        <div>
+          <Step n="6" label="Pages Per Sheet" color="bg-bauhaus-black text-white" />
+          <p className="text-xs text-gray-500 -mt-2 mb-4">
+            Adjust the slider to choose how many document pages to print on each physical sheet.
+          </p>
+          <div className="border-4 border-bauhaus-black p-6 bg-gray-50 space-y-4 shadow-[4px_4px_0_0_#1a1a1a]">
+            <div className="flex justify-between items-center">
+              <span className="font-bold uppercase text-sm">Layout Choice:</span>
+              <span className="bg-bauhaus-yellow text-bauhaus-black border-2 border-bauhaus-black px-3 py-1 font-black text-xl">
+                {pagesPerSheet} {pagesPerSheet === 1 ? "Page" : "Pages"} / Sheet
+              </span>
+            </div>
+            
+            <input
+              type="range"
+              min="1"
+              max="20"
+              step="1"
+              value={pagesPerSheet}
+              onChange={handleSliderChange}
+              className="w-full accent-bauhaus-red h-3 bg-gray-200 border-2 border-bauhaus-black rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 [&::-webkit-slider-thumb]:bg-bauhaus-red [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-bauhaus-black"
+            />
+            
+            <div className="flex justify-between font-mono font-black text-xs text-gray-500 px-1">
+              <span>1 page</span>
+              <span>5</span>
+              <span>10</span>
+              <span>15</span>
+              <span>20 pages / sheet</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 7. Number of Copies */}
+        <div>
+          <Step n="7" label="Number of Copies" color="bg-bauhaus-red text-white" />
+          <div className="flex items-center gap-4">
+            <button type="button" onClick={() => setCopies(Math.max(1, (Number(copies) || 1) - 1))} className="w-12 h-12 border-4 border-bauhaus-black bg-bauhaus-white font-black text-2xl hover:bg-gray-100 transition-colors">−</button>
+            <input
+              type="number"
+              min="1"
+              max="999"
+              value={copies}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "") {
+                  setCopies("");
+                } else {
+                  const parsed = parseInt(val, 10);
+                  setCopies(isNaN(parsed) ? "" : Math.max(1, Math.min(999, parsed)));
+                }
+              }}
+              onBlur={() => {
+                if (copies === "" || copies < 1) {
+                  setCopies(1);
+                }
+              }}
+              className="w-20 h-12 border-4 border-bauhaus-black bg-bauhaus-yellow font-black text-2xl text-center outline-none focus:bg-white"
+            />
+            <button type="button" onClick={() => setCopies(Math.min(999, (Number(copies) || 1) + 1))} className="w-12 h-12 border-4 border-bauhaus-black bg-bauhaus-white font-black text-2xl hover:bg-gray-100 transition-colors">+</button>
+          </div>
+        </div>
+
+        {/* 8. Special Notes */}
+        <div>
+          <Step n="8" label="Special Notes (Optional)" color="bg-bauhaus-blue text-white" />
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Any special instructions? e.g. 'Print only pages 3–5', 'Staple in corner', etc."
+            rows={3}
+            className="w-full border-4 border-bauhaus-black p-4 text-sm font-medium outline-none focus:border-bauhaus-blue resize-none"
+          />
+        </div>
+
+        {/* Payment Method Selector */}
+        {(onlineEnabled || offlineEnabled) && (
+          <div className="border-4 border-bauhaus-black p-6 bg-gray-50 space-y-4 shadow-[4px_4px_0_0_#1a1a1a]">
+            <div className="flex items-center gap-2 border-b-2 border-bauhaus-black pb-2 mb-2">
+              <span className="font-black uppercase text-sm">💳 Select Payment Method</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {offlineEnabled && (
+                <label className={`border-4 cursor-pointer p-4 text-center font-black uppercase transition-all ${
+                  paymentMethod === "in-shop" 
+                    ? "bg-bauhaus-black text-white border-bauhaus-black shadow-[3px_3px_0_0_#e0162b]" 
+                    : "border-bauhaus-black bg-white hover:bg-gray-50 text-black"
+                }`}>
+                  <input 
+                    type="radio" 
+                    name="paymentMethod" 
+                    value="in-shop" 
+                    checked={paymentMethod === "in-shop"} 
+                    onChange={() => setPaymentMethod("in-shop")} 
+                    className="hidden" 
+                  />
+                  <p className="text-sm">Pay at Shop</p>
+                  <p className="text-[10px] font-medium opacity-60 normal-case mt-0.5">Pay cash/UPI at counter</p>
+                </label>
+              )}
+
+              {onlineEnabled && (
+                <label className={`border-4 cursor-pointer p-4 text-center font-black uppercase transition-all ${
+                  paymentMethod === "online" 
+                    ? "bg-bauhaus-black text-white border-bauhaus-black shadow-[3px_3px_0_0_#e0162b]" 
+                    : "border-bauhaus-black bg-white hover:bg-gray-50 text-black"
+                }`}>
+                  <input 
+                    type="radio" 
+                    name="paymentMethod" 
+                    value="online" 
+                    checked={paymentMethod === "online"} 
+                    onChange={() => setPaymentMethod("online")} 
+                    className="hidden" 
+                  />
+                  <p className="text-sm">Online Payment</p>
+                  <p className="text-[10px] font-medium opacity-60 normal-case mt-0.5">Pay now via Razorpay</p>
+                </label>
+              )}
+            </div>
+            
+            <p className="text-xs text-gray-500 mt-2 font-medium">
+              {paymentMethod === "online" 
+                ? "⚡ Pay securely using Cards, NetBanking, UPI, or Wallets." 
+                : "🏪 Show tracking ID at the counter to pay and collect prints."}
+            </p>
+          </div>
+        )}
+
+        {/* Upload Progress Bar */}
+        {uploadProgress !== null && (
+          <div className="w-full bg-gray-200 border-4 border-bauhaus-black h-8 relative mb-4">
+            <div 
+              className="bg-bauhaus-blue h-full transition-all duration-100 animate-pulse" 
+              style={{ width: `${uploadProgress}%` }}
+            />
+            <span className="absolute inset-0 flex items-center justify-center text-xs font-black uppercase text-black mix-blend-difference">
+              Uploading: {uploadProgress}%
+            </span>
+          </div>
+        )}
+
+        {/* Submit */}
+        <button
+          type="submit"
+          disabled={isSubmitting || !file || isVerifyingPayment}
+          className="w-full bg-bauhaus-red text-bauhaus-white border-4 border-bauhaus-black py-5 font-black text-xl uppercase tracking-widest disabled:opacity-40 hover:bg-red-700 transition-colors flex items-center justify-center gap-3"
+        >
+          <Printer className="w-6 h-6" />
+          {isVerifyingPayment ? "Verifying Payment..." : isSubmitting ? "Uploading..." : "Submit Print Request"}
+        </button>
+      </form>
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
+    </div>
+  );
+}

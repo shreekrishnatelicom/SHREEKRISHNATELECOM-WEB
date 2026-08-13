@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bauhaus-red: #e0162b;
+  --color-bauhaus-blue: #00488f;
+  --color-bauhaus-yellow: #f6c400;
+  --color-bauhaus-black: #1a1a1a;
+  --color-bauhaus-white: #f4f4f4;
+
+  --color-background: var(--color-bauhaus-white);
+  --color-foreground: var(--color-bauhaus-black);
+
+  --font-sans: var(--font-geist-sans), "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+}
+
+:root {
+  --background: #f4f4f4;
+  --foreground: #1a1a1a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  /* Bauhaus often uses stark borders and geometric shapes. Let's set some base styles */
+}
+
+/* Custom utilities for Bauhaus aesthetic */
+@layer utilities {
+  .bauhaus-border {
+    @apply border-4 border-bauhaus-black;
+  }
+  .bauhaus-shadow {
+    @apply shadow-[8px_8px_0px_0px_rgba(26,26,26,1)];
+  }
+  .bauhaus-shadow-hover {
+    @apply hover:translate-x-1 hover:translate-y-1 hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all;
+  }
+}
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+main {
+  animation: pageFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
