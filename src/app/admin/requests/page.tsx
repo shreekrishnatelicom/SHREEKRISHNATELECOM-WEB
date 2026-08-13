@@ -58,6 +58,20 @@ const STATUS_CFG: Record<Status, { cls: string; label: string }> = {
   "pending-payment":  { cls: "bg-orange-200 text-orange-800 border-orange-400 font-medium", label: "Pending Payment" },
 };
 
+const parseFiles = (fileUrl: string, fileName: string) => {
+  try {
+    if (fileUrl.startsWith("[")) {
+      const urls: string[] = JSON.parse(fileUrl);
+      const names: string[] = JSON.parse(fileName);
+      return urls.map((url, idx) => ({
+        url,
+        name: names[idx] || `File ${idx + 1}`
+      }));
+    }
+  } catch (e) {}
+  return [{ url: fileUrl, name: fileName }];
+};
+
 export default function AdminRequests() {
   const [requests, setRequests] = useState<PrintRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -112,7 +126,35 @@ export default function AdminRequests() {
         method: "DELETE"
       });
       if (res.ok) {
-        setRequests((prev) => prev.map((r) => r.id === reqId ? { ...r, fileUrl: "/api/files/deleted" } : r));
+        setRequests((prev) => prev.map((r) => {
+          if (r.id !== reqId) return r;
+          let newFileUrl = r.fileUrl;
+          let newFileName = r.fileName;
+          try {
+            if (r.fileUrl.startsWith("[")) {
+              const urls: string[] = JSON.parse(r.fileUrl);
+              const names: string[] = JSON.parse(r.fileName);
+              const filteredIndices = urls
+                .map((url, idx) => ({ url, idx }))
+                .filter(item => !item.url.includes(fileId))
+                .map(item => item.idx);
+              if (filteredIndices.length === 0) {
+                newFileUrl = "/api/files/deleted";
+                newFileName = "deleted";
+              } else {
+                newFileUrl = JSON.stringify(filteredIndices.map(idx => urls[idx]));
+                newFileName = JSON.stringify(filteredIndices.map(idx => names[idx]));
+              }
+            } else {
+              newFileUrl = "/api/files/deleted";
+              newFileName = "deleted";
+            }
+          } catch (e) {
+            newFileUrl = "/api/files/deleted";
+            newFileName = "deleted";
+          }
+          return { ...r, fileUrl: newFileUrl, fileName: newFileName };
+        }));
         window.dispatchEvent(new CustomEvent("storage-update"));
       } else {
         alert("Failed to delete file.");
@@ -208,42 +250,54 @@ export default function AdminRequests() {
           )}
         </div>
 
-        <p className="font-medium text-gray-700 text-sm mb-1 break-all">{req.fileName}</p>
+        <div className="space-y-2 mb-3">
+          {parseFiles(req.fileUrl, req.fileName).map((file, idx) => {
+            const isFileDeleted = file.url.endsWith("deleted");
+            return (
+              <div key={idx} className="flex flex-wrap items-center justify-between border border-gray-200 p-2.5 bg-gray-50 gap-2">
+                <span className="font-medium text-gray-700 text-sm break-all flex-1 pr-3">{file.name}</span>
+                <div className="flex items-center gap-2">
+                  {isFileDeleted ? (
+                    <span className="px-2 py-1 text-[10px] font-black uppercase border border-dashed border-gray-400 text-gray-400 bg-gray-100">
+                      Deleted
+                    </span>
+                  ) : (
+                    <>
+                      <a 
+                        href={file.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        onClick={() => {
+                          if (req.status !== "completed") {
+                            updateStatus(req.id, "completed");
+                          }
+                        }}
+                        className="flex items-center gap-1.5 bg-bauhaus-blue text-white px-3 py-1.5 font-bold uppercase text-[10px] border border-bauhaus-black hover:bg-blue-700 transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </a>
+                      <a href={file.url} download className="flex items-center gap-1.5 bg-bauhaus-black text-white px-3 py-1.5 font-bold uppercase text-[10px] border border-bauhaus-black hover:bg-gray-800 transition-colors">
+                        <Download className="w-3.5 h-3.5" /> Download
+                      </a>
+                      <button 
+                        onClick={() => handleDeleteFile(req.id, file.url)} 
+                        disabled={isDeleting === req.id}
+                        className="flex items-center gap-1.5 bg-bauhaus-red text-white px-3 py-1.5 font-bold uppercase text-[10px] border border-bauhaus-black hover:bg-red-700 transition-colors disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
         {clientNotes && <p className="text-xs text-gray-600 bg-gray-50 border-l-4 border-gray-300 p-2 my-2 font-medium">Note: {clientNotes}</p>}
         <p className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleString("en-IN")}</p>
 
         <div className="flex flex-wrap gap-2 mt-4">
-          {req.fileUrl.endsWith("deleted") ? (
-            <span className="px-3 py-2 text-xs font-black uppercase border-2 border-dashed border-gray-400 text-gray-400 bg-gray-50">
-              File Deleted (Space Saved)
-            </span>
-          ) : (
-            <>
-              <a 
-                href={req.fileUrl} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                onClick={() => {
-                  if (req.status !== "completed") {
-                    updateStatus(req.id, "completed");
-                  }
-                }}
-                className="flex items-center gap-2 bg-bauhaus-blue text-white px-4 py-2 font-bold uppercase text-xs border-2 border-bauhaus-black hover:bg-blue-700 transition-colors"
-              >
-                <Eye className="w-4 h-4" /> View
-              </a>
-              <a href={req.fileUrl} download className="flex items-center gap-2 bg-bauhaus-black text-white px-4 py-2 font-bold uppercase text-xs border-2 border-bauhaus-black hover:bg-gray-800 transition-colors">
-                <Download className="w-4 h-4" /> Download
-              </a>
-              <button 
-                onClick={() => handleDeleteFile(req.id, req.fileUrl)} 
-                disabled={isDeleting === req.id}
-                className="flex items-center gap-2 bg-bauhaus-red text-white px-4 py-2 font-bold uppercase text-xs border-2 border-bauhaus-black hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                <Trash2 className="w-4 h-4" /> Delete File
-              </button>
-            </>
-          )}
           <button onClick={() => updateStatus(req.id, "processing")} disabled={isUpdating === req.id || req.status === "processing"} title="Mark Processing" className="p-2 border-2 border-bauhaus-black hover:bg-bauhaus-blue hover:text-white transition-colors disabled:opacity-30">
             <RefreshCcw className="w-4 h-4" />
           </button>

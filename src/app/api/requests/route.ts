@@ -3,38 +3,107 @@ import prisma from "@/lib/prisma";
 
 async function cleanupOldFiles() {
   try {
-    // 24 hours ago timestamp
+    // 1. Clean up completed/failed requests older than 24 hours (delete files)
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    // Find requests with status completed/failed and modified/updated older than 24 hours
-    // that still have a valid fileUrl pointing to /api/files/
     const oldRequests = await prisma.printRequest.findMany({
       where: {
         status: { in: ["completed", "failed"] },
         updatedAt: { lt: oneDayAgo },
-        fileUrl: { startsWith: "/api/files/" }
+        NOT: {
+          fileUrl: {
+            endsWith: "deleted"
+          }
+        }
       }
     });
 
     for (const req of oldRequests) {
-      const fileId = req.fileUrl.split("/").pop();
-      if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
-        try {
-          await prisma.fileStorage.delete({
-            where: { id: fileId }
-          });
-        } catch (e) {
-          // If already deleted or not found, ignore
+      let urls: string[] = [];
+      try {
+        if (req.fileUrl.startsWith("[")) {
+          urls = JSON.parse(req.fileUrl);
+        } else {
+          urls = [req.fileUrl];
+        }
+      } catch (e) {
+        urls = [req.fileUrl];
+      }
+
+      for (const url of urls) {
+        const fileId = url.split("/").pop();
+        if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+          try {
+            await prisma.fileStorage.delete({ where: { id: fileId } });
+          } catch (e) {}
+          try {
+            if ((prisma as any).fileChunk) {
+              await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
+            } else {
+              await prisma.$runCommandRaw({
+                delete: "FileChunk",
+                deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
+              });
+            }
+          } catch (e) {}
         }
       }
-      // Update request fileUrl to end with "deleted"
+
       await prisma.printRequest.update({
         where: { id: req.id },
         data: { fileUrl: "/api/files/deleted" }
       });
     }
+
+    // 2. Delete pending-payment print requests older than 15 minutes (failed/cancelled checkouts)
+    const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const expiredRequests = await prisma.printRequest.findMany({
+      where: {
+        status: "pending-payment",
+        createdAt: { lt: fifteenMinsAgo }
+      }
+    });
+
+    for (const req of expiredRequests) {
+      let urls: string[] = [];
+      try {
+        if (req.fileUrl.startsWith("[")) {
+          urls = JSON.parse(req.fileUrl);
+        } else if (req.fileUrl && req.fileUrl.startsWith("/api/files/")) {
+          urls = [req.fileUrl];
+        }
+      } catch (e) {
+        if (req.fileUrl && req.fileUrl.startsWith("/api/files/")) {
+          urls = [req.fileUrl];
+        }
+      }
+
+      for (const url of urls) {
+        const fileId = url.split("/").pop();
+        if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+          try {
+            await prisma.fileStorage.delete({ where: { id: fileId } });
+          } catch (e) {}
+          try {
+            if ((prisma as any).fileChunk) {
+              await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
+            } else {
+              await prisma.$runCommandRaw({
+                delete: "FileChunk",
+                deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
+              });
+            }
+          } catch (e) {}
+        }
+      }
+
+      try {
+        await prisma.printRequest.delete({
+          where: { id: req.id }
+        });
+      } catch (e) {}
+    }
   } catch (error) {
-    console.error("File cleanup error:", error);
+    console.error("Cleanup task error:", error);
   }
 }
 

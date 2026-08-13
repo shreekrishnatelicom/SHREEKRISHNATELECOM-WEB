@@ -458,8 +458,14 @@ export default function ProfilePage() {
 
       {/* Delete Account Confirmation Modal */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-bauhaus-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-md w-full p-8 relative animate-[scaleUp_0.2s_ease-out]">
+        <div 
+          onClick={() => setShowDeleteModal(false)}
+          className="fixed inset-0 bg-bauhaus-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-md w-full p-8 relative animate-[scaleUp_0.2s_ease-out] cursor-default"
+          >
             <div className="flex items-center gap-3 mb-4 border-b-4 border-bauhaus-black pb-4">
               <AlertTriangle className="w-8 h-8 text-bauhaus-red shrink-0" />
               <h3 className="text-2xl font-black uppercase text-bauhaus-black">

@@ -180,8 +180,14 @@ export default function PasswordManager() {
     <>
       {/* Modal Popup for Google Users without password */}
       {showModal && (
-        <div className="fixed inset-0 bg-bauhaus-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-md w-full p-8 relative animate-[fadeIn_0.2s_ease-out]">
+        <div 
+          onClick={handleCloseModal}
+          className="fixed inset-0 bg-bauhaus-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-md w-full p-8 relative animate-[fadeIn_0.2s_ease-out] cursor-default"
+          >
             <button
               onClick={handleCloseModal}
               className="absolute top-4 right-4 border-2 border-bauhaus-black p-1 bg-bauhaus-white hover:bg-bauhaus-red hover:text-white transition-colors"

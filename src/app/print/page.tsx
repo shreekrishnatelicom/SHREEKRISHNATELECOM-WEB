@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Upload, File as FileIcon, CheckCircle, Printer, Palette, BookOpen, User as UserIcon } from "lucide-react";
+import { Upload, File as FileIcon, CheckCircle, Printer, Palette, BookOpen, User as UserIcon, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
@@ -61,7 +61,7 @@ export default function PrintService() {
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const [file, setFile]               = useState<File | null>(null);
+  const [files, setFiles]             = useState<File[]>([]);
   const [serviceType, setServiceType] = useState<"study-material" | "others">("others");
   const [colorMode, setColorMode]     = useState<ColorMode>("bw");
   const [copies, setCopies]           = useState<number | "">(1);
@@ -130,12 +130,44 @@ export default function PrintService() {
     fetchPaymentSettings();
   }, []);
 
-  const handleFile = (f: File | null) => {
-    if (!f) return;
-    if (f.type !== "application/pdf") { setError("Only PDF files are supported."); return; }
-    if (f.size > 50 * 1024 * 1024) { setError("File is too large. Max size is 50MB for database storage."); return; }
+  const triggerFileInput = () => {
+    document.getElementById("file-input-element")?.click();
+  };
+
+  const handleFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const newFiles: File[] = [];
+    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".doc", ".docx", ".xls", ".xlsx"];
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "image/bmp",
+      "image/tiff",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ];
+
+    for (let i = 0; i < fileList.length; i++) {
+      const f = fileList[i];
+      const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
+      if (!allowedMimeTypes.includes(f.type) && !allowedExtensions.includes(ext)) {
+        setError(`File "${f.name}" is not supported. Supported: PDF, Images, Word, Excel.`);
+        return;
+      }
+      if (f.size > 50 * 1024 * 1024) {
+        setError(`File "${f.name}" is too large. Max size is 50MB per file.`);
+        return;
+      }
+      newFiles.push(f);
+    }
     setError(null);
-    setFile(f);
+    setFiles((prev) => [...prev, ...newFiles]);
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,7 +251,14 @@ export default function PrintService() {
         y += 5.5;
       };
 
-      drawRow("File Name", data.fileName || (file ? file.name : ""));
+      let fileNameDisplay = data.fileName;
+      try {
+        if (data.fileName && data.fileName.startsWith("[")) {
+          const names = JSON.parse(data.fileName);
+          fileNameDisplay = names.join(", ");
+        }
+      } catch (e) {}
+      drawRow("File Name", fileNameDisplay || (files.length > 0 ? files.map(f => f.name).join(", ") : ""));
       drawRow("Service Type", serviceType === "study-material" ? "Study Material" : "Others");
       drawRow("Page Count", `${data.pageCount || 1} pages`);
       drawRow("Color Mode", colorMode === "color" ? "Full Color" : "B&W");
@@ -253,13 +292,15 @@ export default function PrintService() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) { setError("Please select a PDF file."); return; }
+    if (files.length === 0) { setError("Please select at least one file."); return; }
     if (!name.trim()) { setError("Please enter your name."); return; }
     setIsSubmitting(true);
     setError(null);
 
     const fd = new FormData();
-    fd.append("file", file);
+    files.forEach((f) => {
+      fd.append("files", f);
+    });
     fd.append("colorMode", colorMode);
     fd.append("copies", String(copies));
     fd.append("printSide", printSide);
@@ -331,9 +372,18 @@ export default function PrintService() {
             color: "#00488f",
           },
           modal: {
-            ondismiss: function() {
+            ondismiss: async function() {
               setIsSubmitting(false);
               setError("Payment was cancelled. Request not completed.");
+              try {
+                await fetch("/api/payment/cancel", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ razorpayOrderId: data.razorpayOrderId })
+                });
+              } catch (e) {
+                console.error("Failed to cancel payment draft:", e);
+              }
             }
           }
         };
@@ -372,6 +422,15 @@ export default function PrintService() {
           } else {
             setIsSubmitting(false);
             setError("Simulated payment cancelled.");
+            try {
+              await fetch("/api/payment/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ razorpayOrderId: data.razorpayOrderId })
+              });
+            } catch (e) {
+              console.error("Failed to cancel payment draft:", e);
+            }
           }
           return;
         }
@@ -462,7 +521,7 @@ export default function PrintService() {
               <Link href="/track" className="flex-1 bg-bauhaus-black text-bauhaus-white border-4 border-bauhaus-black py-3 font-bold uppercase text-sm text-center hover:bg-gray-800 transition-colors">
                 Track
               </Link>
-              <button onClick={() => { setTrackingId(null); setFile(null); setCopies(1); }} className="flex-1 border-4 border-bauhaus-black py-3 font-bold uppercase text-sm hover:bg-gray-100 transition-colors">
+              <button onClick={() => { setTrackingId(null); setFiles([]); setCopies(1); }} className="flex-1 border-4 border-bauhaus-black py-3 font-bold uppercase text-sm hover:bg-gray-100 transition-colors">
                 New Request
               </button>
             </div>
@@ -532,28 +591,72 @@ export default function PrintService() {
           </div>
         </div>
 
-        {/* 2. Upload PDF */}
+        {/* 2. Upload Files */}
         <div>
-          <Step n="2" label="Upload PDF" color="bg-bauhaus-red text-white" />
+          <Step n="2" label="Upload Files" color="bg-bauhaus-red text-white" />
           <div
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFile(e.dataTransfer.files[0]); }}
-            className={`relative border-4 border-dashed p-10 text-center cursor-pointer transition-all ${isDragging ? "border-bauhaus-blue bg-blue-50 scale-[1.01]" : "border-bauhaus-black hover:bg-gray-50"}`}
+            onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer.files); }}
+            onClick={() => { if (files.length === 0) triggerFileInput(); }}
+            className={`relative border-4 border-dashed p-8 text-center cursor-pointer transition-all ${isDragging ? "border-bauhaus-blue bg-blue-50 scale-[1.01]" : "border-bauhaus-black hover:bg-gray-50"}`}
           >
-            <input type="file" accept=".pdf" onChange={(e) => handleFile(e.target.files?.[0] || null)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" required />
-            {file ? (
-              <div className="flex flex-col items-center">
-                <FileIcon className="w-12 h-12 mb-3 text-bauhaus-blue" />
-                <p className="font-bold truncate max-w-xs">{file.name}</p>
-                <p className="text-xs text-gray-400 mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                <span className="mt-2 text-xs font-bold uppercase text-green-600 bg-green-50 border border-green-300 px-2 py-0.5">✓ Ready to upload</span>
+            <input
+              id="file-input-element"
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.doc,.docx,.xls,.xlsx"
+              onChange={(e) => handleFiles(e.target.files)}
+              className="hidden"
+            />
+            {files.length > 0 ? (
+              <div className="space-y-4" onClick={(e) => e.stopPropagation()}>
+                <p className="font-bold text-sm uppercase text-gray-500 mb-1 text-left">Selected Files ({files.length}):</p>
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1 text-left">
+                  {files.map((f, idx) => (
+                    <div key={idx} className="flex items-center justify-between border-2 border-bauhaus-black bg-white p-3 shadow-[2px_2px_0_0_#1a1a1a]">
+                      <div className="flex items-center gap-3 truncate flex-1 min-w-0 pr-3">
+                        <FileIcon className="w-6 h-6 text-bauhaus-blue shrink-0" />
+                        <div className="truncate min-w-0 font-bold">
+                          <p className="text-sm truncate">{f.name}</p>
+                          <p className="text-[10px] text-gray-400">{(f.size / 1024 / 1024).toFixed(2)} MB</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFiles((prev) => prev.filter((_, i) => i !== idx));
+                        }}
+                        className="bg-bauhaus-red text-white p-1 hover:bg-red-700 transition-colors border border-bauhaus-black shadow-[1px_1px_0_0_#1a1a1a]"
+                        title="Remove file"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap justify-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={triggerFileInput}
+                    className="bg-bauhaus-black text-white border-2 border-bauhaus-black px-4 py-2 text-xs font-bold uppercase hover:bg-gray-800 transition-colors"
+                  >
+                    + Add More Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiles([])}
+                    className="border-2 border-bauhaus-black px-4 py-2 text-xs font-bold uppercase hover:bg-gray-100 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center">
+              <div className="flex flex-col items-center py-4">
                 <Upload className="w-12 h-12 mb-3 text-gray-300" />
                 <p className="font-bold uppercase">Drag & Drop or Click to Browse</p>
-                <p className="text-xs text-gray-400 mt-1">PDF files only • Max 50MB</p>
+                <p className="text-xs text-gray-400 mt-1">PDF, Photos, Word, Excel • Max 50MB per file</p>
               </div>
             )}
           </div>
@@ -760,7 +863,7 @@ export default function PrintService() {
         {/* Submit */}
         <button
           type="submit"
-          disabled={isSubmitting || !file || isVerifyingPayment}
+          disabled={isSubmitting || files.length === 0 || isVerifyingPayment}
           className="w-full bg-bauhaus-red text-bauhaus-white border-4 border-bauhaus-black py-5 font-black text-xl uppercase tracking-widest disabled:opacity-40 hover:bg-red-700 transition-colors flex items-center justify-center gap-3"
         >
           <Printer className="w-6 h-6" />

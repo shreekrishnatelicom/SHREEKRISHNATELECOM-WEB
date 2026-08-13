@@ -67,10 +67,18 @@ export default async function Dashboard() {
                     {req.createdAt.toLocaleDateString()}
                   </div>
                 </div>
-                <h3 className="font-black text-lg mb-2 truncate" title={req.fileName}>
+                <h3 className="font-black text-lg mb-2 truncate" title={
+                  req.fileName.startsWith("[") 
+                    ? (() => { try { return JSON.parse(req.fileName).join(", "); } catch (e) { return req.fileName; } })()
+                    : req.fileName
+                }>
                   {req.notes?.includes("[Service Request:") 
                     ? `Service: ${req.notes.match(/\[Service Request:\s*([^\]]+)\]/)?.[1] || "Other Request"}` 
-                    : req.fileName}
+                    : (
+                        req.fileName.startsWith("[") 
+                          ? (() => { try { return JSON.parse(req.fileName).join(", "); } catch (e) { return req.fileName; } })()
+                          : req.fileName
+                      )}
                 </h3>
                 <div className="space-y-2 text-sm font-bold text-gray-600 mb-6">
                   <p>Tracking ID: <span className="text-bauhaus-black">{req.trackingId}</span></p>

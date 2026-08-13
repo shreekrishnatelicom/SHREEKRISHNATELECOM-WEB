@@ -108,10 +108,52 @@ export async function DELETE(
     }
 
     // Update the print request to mark the file as deleted
-    await prisma.printRequest.updateMany({
-      where: { fileUrl: `/api/files/${id}` },
-      data: { fileUrl: "/api/files/deleted" }
+    const targetUrl = `/api/files/${id}`;
+    const requestsToUpdate = await prisma.printRequest.findMany({
+      where: {
+        fileUrl: {
+          contains: targetUrl
+        }
+      }
     });
+
+    for (const req of requestsToUpdate) {
+      let newFileUrl = req.fileUrl;
+      let newFileName = req.fileName;
+
+      try {
+        if (req.fileUrl.startsWith("[")) {
+          const urls: string[] = JSON.parse(req.fileUrl);
+          const names: string[] = JSON.parse(req.fileName);
+          
+          const filteredIndices = urls
+            .map((url, idx) => ({ url, idx }))
+            .filter(item => !item.url.includes(id))
+            .map(item => item.idx);
+            
+          if (filteredIndices.length === 0) {
+            newFileUrl = "/api/files/deleted";
+            newFileName = "deleted";
+          } else {
+            const filteredUrls = filteredIndices.map(idx => urls[idx]);
+            const filteredNames = filteredIndices.map(idx => names[idx]);
+            newFileUrl = JSON.stringify(filteredUrls);
+            newFileName = JSON.stringify(filteredNames);
+          }
+        } else if (req.fileUrl === targetUrl) {
+          newFileUrl = "/api/files/deleted";
+          newFileName = "deleted";
+        }
+      } catch (e) {
+        newFileUrl = "/api/files/deleted";
+        newFileName = "deleted";
+      }
+
+      await prisma.printRequest.update({
+        where: { id: req.id },
+        data: { fileUrl: newFileUrl, fileName: newFileName }
+      });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

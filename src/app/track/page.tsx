@@ -116,7 +116,11 @@ export default function TrackPage() {
             </div>
             <div className="sm:col-span-2">
               <p className="text-gray-500 text-sm font-bold uppercase">File Name</p>
-              <p className="break-all font-semibold">{result.fileName}</p>
+              <p className="break-all font-semibold">
+                {result.fileName.startsWith("[") 
+                  ? (() => { try { return JSON.parse(result.fileName).join(", "); } catch (e) { return result.fileName; } })()
+                  : result.fileName}
+              </p>
             </div>
             <div>
               <p className="text-gray-500 text-sm font-bold uppercase">Color Mode</p>

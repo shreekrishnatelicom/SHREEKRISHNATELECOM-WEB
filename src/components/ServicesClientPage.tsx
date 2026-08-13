@@ -397,9 +397,18 @@ export default function ServicesClientPage({ services, categories }: Props) {
             color: "#00488f",
           },
           modal: {
-            ondismiss: function() {
+            ondismiss: async function() {
               setIsSubmitting(false);
               setError("Payment was cancelled. Request not completed.");
+              try {
+                await fetch("/api/payment/cancel", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ razorpayOrderId: data.razorpayOrderId })
+                });
+              } catch (e) {
+                console.error("Failed to cancel payment draft:", e);
+              }
             }
           }
         };
@@ -435,6 +444,15 @@ export default function ServicesClientPage({ services, categories }: Props) {
           } else {
             setIsSubmitting(false);
             setError("Simulated payment cancelled.");
+            try {
+              await fetch("/api/payment/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ razorpayOrderId: data.razorpayOrderId })
+              });
+            } catch (e) {
+              console.error("Failed to cancel payment draft:", e);
+            }
           }
           return;
         }
@@ -524,8 +542,14 @@ export default function ServicesClientPage({ services, categories }: Props) {
 
       {/* Request Modal */}
       {activeSvc && (
-        <div className="fixed inset-0 bg-bauhaus-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-lg w-full p-8 relative max-h-[90vh] overflow-y-auto">
+        <div 
+          onClick={() => setActiveSvc(null)}
+          className="fixed inset-0 bg-bauhaus-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-bauhaus-white border-4 border-bauhaus-black shadow-[12px_12px_0px_0px_rgba(230,22,43,1)] max-w-lg w-full p-8 relative max-h-[90vh] overflow-y-auto cursor-default"
+          >
             <button
               onClick={() => setActiveSvc(null)}
               className="absolute top-4 right-4 border-2 border-bauhaus-black p-1 bg-white hover:bg-bauhaus-red hover:text-white transition-colors"

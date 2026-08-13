@@ -47,8 +47,17 @@ export default function Header() {
   const dashboardUrl = isAdmin ? "/admin" : "/dashboard";
 
   return (
-    <header className="border-b-4 border-bauhaus-black bg-bauhaus-yellow sticky top-0 z-50">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 lg:px-6">
+    <>
+      {/* Mobile Menu Backdrop Overlay */}
+      {menuOpen && (
+        <div 
+          onClick={() => setMenuOpen(false)}
+          className="lg:hidden fixed inset-0 bg-black/40 z-40 transition-opacity"
+        />
+      )}
+
+      <header className="border-b-4 border-bauhaus-black bg-bauhaus-yellow sticky top-0 z-50">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 lg:px-6">
         {/* Logo */}
         <Link href="/" className="group flex items-center gap-3 shrink-0">
           <div className="flex h-11 w-11 items-center justify-center rounded-full border-4 border-bauhaus-black bg-bauhaus-red text-bauhaus-white font-black text-lg group-hover:bg-bauhaus-blue transition-colors">
@@ -133,7 +142,7 @@ export default function Header() {
 
       {/* Mobile Menu */}
       {menuOpen && (
-        <div className="lg:hidden border-t-4 border-bauhaus-black bg-bauhaus-white">
+        <div className="lg:hidden absolute top-full left-0 right-0 border-t-4 border-b-4 border-bauhaus-black bg-bauhaus-white z-50 shadow-xl max-h-[calc(100vh-80px)] overflow-y-auto">
           {NAV_LINKS.map((link) => (
             <Link
               key={link.href}
@@ -191,6 +200,7 @@ export default function Header() {
         </div>
       )}
     </header>
+    </>
   );
 }
 

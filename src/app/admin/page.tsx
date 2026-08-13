@@ -156,11 +156,26 @@ export default async function AdminDashboard() {
                 <Clock className="w-5 h-5 text-gray-400 shrink-0" />
                 <div>
                   <p className="font-mono font-black">{r.trackingId}</p>
-                  <p className="text-sm text-gray-500">
-                    {r.notes?.includes("[Service Request:")
-                      ? `Service: ${r.notes.match(/\[Service Request:\s*([^\]]+)\]/)?.[1] || "Other Request"}`
-                      : r.fileName}
-                  </p>
+                  {(() => {
+                    const isSvc = r.notes?.includes("[Service Request:");
+                    let fileDisplay = r.fileName;
+                    if (!isSvc) {
+                      try {
+                        if (r.fileName.startsWith("[")) {
+                          const names = JSON.parse(r.fileName);
+                          fileDisplay = names.join(", ");
+                        }
+                      } catch (e) {}
+                    }
+                    const textDisplay = isSvc
+                      ? `Service: ${r.notes?.match(/\[Service Request:\s*([^\]]+)\]/)?.[1] || "Other Request"}`
+                      : fileDisplay;
+                    return (
+                      <p className="text-sm text-gray-500 truncate max-w-[150px] sm:max-w-xs md:max-w-md block" title={textDisplay}>
+                        {textDisplay}
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
               <span className={`px-3 py-1 text-xs font-black uppercase border-2 border-bauhaus-black ${
