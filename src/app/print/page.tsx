@@ -53,6 +53,48 @@ function uploadWithProgress(
   });
 }
 
+function detectPdfPageCount(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const str = e.target?.result as string;
+      if (!str) {
+        resolve(1);
+        return;
+      }
+      try {
+        const matches = str.match(/\/Type\s*\/Page\b/g);
+        if (matches) {
+          resolve(matches.length);
+          return;
+        }
+
+        const countMatches = str.match(/\/Count\s+(\d+)/g);
+        if (countMatches) {
+          for (const m of countMatches) {
+            const match = m.match(/\d+/);
+            if (match) {
+              const val = parseInt(match[0], 10);
+              if (val > 0) {
+                resolve(val);
+                return;
+              }
+            }
+          }
+        }
+        resolve(1);
+      } catch (err) {
+        console.error("Error parsing PDF page count:", err);
+        resolve(1);
+      }
+    };
+    reader.onerror = () => {
+      resolve(1);
+    };
+    reader.readAsText(file, "ascii");
+  });
+}
+
 export default function PrintService() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -89,6 +131,7 @@ export default function PrintService() {
   const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountPct: number; minPrice: number } | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
+  const [filePageCounts, setFilePageCounts] = useState<Record<string, number>>({});
 
 
   useEffect(() => {
@@ -174,8 +217,11 @@ export default function PrintService() {
       }
     }
 
-    // We don't know page count yet — use 1 page per file as a minimum estimate
-    const estimatedPages = files.length; // 1 page per file estimate
+    let estimatedPages = 0;
+    files.forEach((f) => {
+      estimatedPages += filePageCounts[f.name] || 1;
+    });
+
     const printedSides = Math.ceil(estimatedPages / pagesPerSheet);
     const sheets = printSide === "double" ? Math.ceil(printedSides / 2) : printedSides;
     return Math.round(rate * sheets * copiesNum * 100) / 100;
@@ -268,6 +314,24 @@ export default function PrintService() {
     setError(null);
     setConfirmedPrice(null);
     setFiles((prev) => [...prev, ...newFiles]);
+
+    // Asynchronously detect page counts
+    newFiles.forEach((file) => {
+      const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+      if (file.type === "application/pdf" || ext === ".pdf") {
+        detectPdfPageCount(file).then((count) => {
+          setFilePageCounts((prev) => ({
+            ...prev,
+            [file.name]: count,
+          }));
+        });
+      } else {
+        setFilePageCounts((prev) => ({
+          ...prev,
+          [file.name]: 1,
+        }));
+      }
+    });
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -725,13 +789,28 @@ export default function PrintService() {
                         <FileIcon className="w-6 h-6 text-bauhaus-blue shrink-0" />
                         <div className="truncate min-w-0 font-bold">
                           <p className="text-sm truncate">{f.name}</p>
-                          <p className="text-[10px] text-gray-400">{(f.size / 1024 / 1024).toFixed(2)} MB</p>
+                          <p className="text-[10px] text-gray-400">
+                            {(f.size / 1024 / 1024).toFixed(2)} MB
+                            {(f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) && (
+                              <span className="ml-2 font-bold text-bauhaus-blue">
+                                • {filePageCounts[f.name] !== undefined ? `${filePageCounts[f.name]} pages` : "Analyzing pages..."}
+                              </span>
+                            )}
+                          </p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => {
+                          const fileToRemove = files[idx];
                           setFiles((prev) => prev.filter((_, i) => i !== idx));
+                          if (fileToRemove) {
+                            setFilePageCounts((prev) => {
+                              const updated = { ...prev };
+                              delete updated[fileToRemove.name];
+                              return updated;
+                            });
+                          }
                         }}
                         className="bg-bauhaus-red text-white p-1 hover:bg-red-700 transition-colors border border-bauhaus-black shadow-[1px_1px_0_0_#1a1a1a]"
                         title="Remove file"
@@ -751,7 +830,10 @@ export default function PrintService() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setFiles([])}
+                    onClick={() => {
+                      setFiles([]);
+                      setFilePageCounts({});
+                    }}
                     className="border-2 border-bauhaus-black px-4 py-2 text-xs font-bold uppercase hover:bg-gray-100 transition-colors"
                   >
                     Clear All
@@ -1036,7 +1118,14 @@ export default function PrintService() {
                 <p className="text-[10px] text-gray-600 mt-1.5">
                   {confirmedPrice !== null
                     ? "Exact amount charged after page count"
-                    : "Estimate based on 1 page/file — exact amount calculated after upload"}
+                    : (() => {
+                        const totalPages = files.reduce((sum, f) => sum + (filePageCounts[f.name] || 1), 0);
+                        const isAnalyzing = files.some(f => (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) && filePageCounts[f.name] === undefined);
+                        if (isAnalyzing) {
+                          return "Analyzing PDF pages... price will update shortly";
+                        }
+                        return `Price calculated for ${totalPages} page${totalPages === 1 ? "" : "s"}`;
+                      })()}
                 </p>
               </div>
               <div className="text-right text-xs font-bold uppercase text-gray-600 space-y-0.5">
