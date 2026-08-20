@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import Script from "next/script";
+import { PDFDocument } from "pdf-lib";
 
 type ColorMode = "bw" | "color";
 type PrintSide = "single" | "double";
@@ -53,46 +54,15 @@ function uploadWithProgress(
   });
 }
 
-function detectPdfPageCount(file: File): Promise<number> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const str = e.target?.result as string;
-      if (!str) {
-        resolve(1);
-        return;
-      }
-      try {
-        const matches = str.match(/\/Type\s*\/Page\b/g);
-        if (matches) {
-          resolve(matches.length);
-          return;
-        }
-
-        const countMatches = str.match(/\/Count\s+(\d+)/g);
-        if (countMatches) {
-          for (const m of countMatches) {
-            const match = m.match(/\d+/);
-            if (match) {
-              const val = parseInt(match[0], 10);
-              if (val > 0) {
-                resolve(val);
-                return;
-              }
-            }
-          }
-        }
-        resolve(1);
-      } catch (err) {
-        console.error("Error parsing PDF page count:", err);
-        resolve(1);
-      }
-    };
-    reader.onerror = () => {
-      resolve(1);
-    };
-    reader.readAsText(file, "ascii");
-  });
+async function detectPdfPageCount(file: File): Promise<number> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(arrayBuffer, { updateMetadata: false });
+    return pdfDoc.getPageCount();
+  } catch (err) {
+    console.error("Error parsing PDF page count:", err);
+    return 1;
+  }
 }
 
 export default function PrintService() {
