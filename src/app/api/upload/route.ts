@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { PDFDocument } from "pdf-lib";
 
 function generateTrackingId() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -8,24 +9,14 @@ function generateTrackingId() {
   return id;
 }
 
-function getPdfPageCount(buffer: Buffer): number {
-  const str = buffer.toString("ascii");
-  const matches = str.match(/\/Type\s*\/Page\b/g);
-  if (matches) {
-    return matches.length;
+async function getPdfPageCount(buffer: Buffer): Promise<number> {
+  try {
+    const pdfDoc = await PDFDocument.load(buffer, { updateMetadata: false });
+    return pdfDoc.getPageCount();
+  } catch (error) {
+    console.error("Error getting PDF page count:", error);
+    return 1;
   }
-
-  const countMatches = str.match(/\/Count\s+(\d+)/g);
-  if (countMatches) {
-    for (const m of countMatches) {
-      const match = m.match(/\d+/);
-      if (match) {
-        const val = parseInt(match[0], 10);
-        if (val > 0) return val;
-      }
-    }
-  }
-  return 1;
 }
 
 function parsePrice(priceStr: string | null | undefined, defaultVal: number): number {
@@ -236,7 +227,7 @@ export async function POST(req: NextRequest) {
       // Determine page count
       let filePageCount = 1;
       if (file.type === "application/pdf" || ext === ".pdf") {
-        filePageCount = getPdfPageCount(buffer);
+        filePageCount = await getPdfPageCount(buffer);
       }
       totalPageCount += filePageCount;
 
