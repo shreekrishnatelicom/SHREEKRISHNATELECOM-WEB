@@ -8,8 +8,9 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import Script from "next/script";
 import { PDFDocument } from "pdf-lib";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { app } from "@/lib/firebase";
 import { generateInvoicePDF, getFileTypeLabel } from "@/lib/generateInvoicePDF";
-import { upload } from "@vercel/blob/client";
 
 type ColorMode = "bw" | "color";
 type PrintSide = "single" | "double";
@@ -408,21 +409,40 @@ export default function PrintService() {
 
       const totalSize = files.reduce((sum, f) => sum + f.size, 0);
       const loadedSizes = new Array(files.length).fill(0);
+      const storage = getStorage(app);
 
       const uploadPromises = files.map(async (file, index) => {
-        return await upload(file.name, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload/vercel-blob",
-          onUploadProgress: (progressEvent) => {
-            loadedSizes[index] = (progressEvent.percentage / 100) * file.size;
-            const currentTotalLoaded = loadedSizes.reduce((sum, l) => sum + l, 0);
-            const overallPercentage = Math.round((currentTotalLoaded / totalSize) * 100);
-            setUploadProgress(overallPercentage);
-          }
+        const fileRef = ref(storage, `uploads/${Date.now()}_${file.name}`);
+        const uploadTask = uploadBytesResumable(fileRef, file);
+
+        return new Promise<string>((resolve, reject) => {
+          uploadTask.on(
+            "state_changed",
+            (snapshot) => {
+              const percentage = snapshot.totalBytes > 0 
+                ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+                : 0;
+              loadedSizes[index] = (percentage / 100) * file.size;
+              const currentTotalLoaded = loadedSizes.reduce((sum, l) => sum + l, 0);
+              const overallPercentage = Math.round((currentTotalLoaded / totalSize) * 100);
+              setUploadProgress(overallPercentage);
+            },
+            (error) => {
+              reject(error);
+            },
+            async () => {
+              try {
+                const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(downloadUrl);
+              } catch (err) {
+                reject(err);
+              }
+            }
+          );
         });
       });
 
-      const uploadResults = await Promise.all(uploadPromises);
+      const uploadUrls = await Promise.all(uploadPromises);
       setUploadProgress(100);
       await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -430,7 +450,7 @@ export default function PrintService() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fileUrls: uploadResults.map(r => r.url),
+          fileUrls: uploadUrls,
           fileNames: files.map(f => f.name),
           colorMode,
           copies: String(copies),

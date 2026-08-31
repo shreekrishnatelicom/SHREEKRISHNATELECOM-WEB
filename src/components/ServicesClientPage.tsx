@@ -7,8 +7,9 @@ import { useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import Script from "next/script";
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { app } from "@/lib/firebase";
 import { generateInvoicePDF } from "@/lib/generateInvoicePDF";
-import { upload } from "@vercel/blob/client";
 
 const CATEGORY_META: Record<string, { label: string; icon: any; color: string; textColor: string }> = {
   print:       { label: "Printing",               icon: Printer,  color: "bg-bauhaus-blue",   textColor: "text-white" },
@@ -274,13 +275,33 @@ export default function ServicesClientPage({ services, categories }: Props) {
 
     try {
       setUploadProgress(0);
-      const blobResult = await upload(fileToUpload.name, fileToUpload, {
-        access: "public",
-        handleUploadUrl: "/api/upload/vercel-blob",
-        onUploadProgress: (progressEvent) => {
-          setUploadProgress(progressEvent.percentage);
-        }
+      const storage = getStorage(app);
+      const fileRef = ref(storage, `uploads/${Date.now()}_${fileToUpload.name}`);
+      const uploadTask = uploadBytesResumable(fileRef, fileToUpload);
+
+      const downloadUrl = await new Promise<string>((resolve, reject) => {
+        uploadTask.on(
+          "state_changed",
+          (snapshot) => {
+            const percentage = snapshot.totalBytes > 0 
+              ? (snapshot.bytesTransferred / snapshot.totalBytes) * 100 
+              : 0;
+            setUploadProgress(Math.round(percentage));
+          },
+          (error) => {
+            reject(error);
+          },
+          async () => {
+            try {
+              const url = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve(url);
+            } catch (err) {
+              reject(err);
+            }
+          }
+        );
       });
+
       setUploadProgress(100);
       await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -290,7 +311,7 @@ export default function ServicesClientPage({ services, categories }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fileUrls: [blobResult.url],
+          fileUrls: [downloadUrl],
           fileNames: [fileToUpload.name],
           colorMode: "color",
           copies: "1",

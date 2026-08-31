@@ -74,17 +74,40 @@ export async function DELETE(
     const resolvedParams = await params;
     const id = resolvedParams.id;
 
-    if (id === "vercel-blob") {
+    if (id === "vercel-blob" || id === "cloud-storage") {
       const url = req.nextUrl.searchParams.get("url");
       if (!url) {
         return NextResponse.json({ error: "Missing url parameter" }, { status: 400 });
       }
 
-      // Delete from Vercel Blob
-      try {
-        await del(url);
-      } catch (err) {
-        console.error("Error deleting from Vercel Blob:", err);
+      // Delete from Firebase Storage if it's a firebase URL
+      if (url.includes("firebasestorage.googleapis.com")) {
+        try {
+          const decodedUrl = decodeURIComponent(url);
+          const parts = decodedUrl.split("/o/");
+          if (parts.length > 1) {
+            const filePathWithQuery = parts[1];
+            const filePath = filePathWithQuery.split("?")[0];
+            
+            const { getAdminStorage } = await import("@/lib/firebaseAdmin");
+            const bucket = getAdminStorage().bucket();
+            const file = bucket.file(filePath);
+            await file.delete();
+            console.log("Deleted file from Firebase Storage:", filePath);
+          }
+        } catch (err) {
+          console.error("Error deleting from Firebase Storage:", err);
+        }
+      }
+
+      // Delete from Vercel Blob if it's a vercel URL (legacy support)
+      if (url.includes("vercel-storage.com")) {
+        try {
+          await del(url);
+          console.log("Deleted legacy Vercel Blob:", url);
+        } catch (err) {
+          console.error("Error deleting legacy Vercel Blob:", err);
+        }
       }
 
       // Update the print request to mark the file as deleted

@@ -125,8 +125,8 @@ export default function AdminOtherRequests() {
     setIsDeleting(reqId);
     try {
       let res;
-      if (fileUrl.includes("vercel-storage.com")) {
-        res = await fetch(`/api/files/vercel-blob?url=${encodeURIComponent(fileUrl)}`, {
+      if (fileUrl.includes("vercel-storage.com") || fileUrl.includes("firebasestorage.googleapis.com")) {
+        res = await fetch(`/api/files/cloud-storage?url=${encodeURIComponent(fileUrl)}`, {
           method: "DELETE"
         });
       } else {

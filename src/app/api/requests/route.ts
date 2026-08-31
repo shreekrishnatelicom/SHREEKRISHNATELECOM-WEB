@@ -2,6 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { del } from "@vercel/blob";
 
+async function deleteCloudFile(url: string) {
+  if (url.includes("firebasestorage.googleapis.com")) {
+    try {
+      const decodedUrl = decodeURIComponent(url);
+      const parts = decodedUrl.split("/o/");
+      if (parts.length > 1) {
+        const filePathWithQuery = parts[1];
+        const filePath = filePathWithQuery.split("?")[0];
+        
+        const { getAdminStorage } = await import("@/lib/firebaseAdmin");
+        const bucket = getAdminStorage().bucket();
+        await bucket.file(filePath).delete();
+        console.log("Deleted expired/completed file from Firebase Storage:", filePath);
+      }
+    } catch (e) {
+      console.error("Failed to delete old Firebase Storage file:", url, e);
+    }
+  } else if (url.includes("vercel-storage.com")) {
+    try {
+      await del(url);
+    } catch (e) {
+      console.error("Failed to delete old Vercel Blob file:", url, e);
+    }
+  }
+}
+
 async function cleanupOldFiles() {
   try {
     // 1. Clean up completed/failed requests older than 24 hours (delete files)
@@ -31,12 +57,8 @@ async function cleanupOldFiles() {
       }
 
       for (const url of urls) {
-        if (url.includes("vercel-storage.com")) {
-          try {
-            await del(url);
-          } catch (e) {
-            console.error("Failed to delete old Vercel Blob file:", url, e);
-          }
+        if (url.includes("vercel-storage.com") || url.includes("firebasestorage.googleapis.com")) {
+          await deleteCloudFile(url);
         } else {
           const fileId = url.split("/").pop();
           if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
@@ -100,12 +122,8 @@ async function cleanupOldFiles() {
       }
 
       for (const url of urls) {
-        if (url.includes("vercel-storage.com")) {
-          try {
-            await del(url);
-          } catch (e) {
-            console.error("Failed to delete expired Vercel Blob file:", url, e);
-          }
+        if (url.includes("vercel-storage.com") || url.includes("firebasestorage.googleapis.com")) {
+          await deleteCloudFile(url);
         } else {
           const fileId = url.split("/").pop();
           if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
