@@ -8,6 +8,7 @@ import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import Script from "next/script";
 import { generateInvoicePDF } from "@/lib/generateInvoicePDF";
+import { upload } from "@vercel/blob/client";
 
 const CATEGORY_META: Record<string, { label: string; icon: any; color: string; textColor: string }> = {
   print:       { label: "Printing",               icon: Printer,  color: "bg-bauhaus-blue",   textColor: "text-white" },
@@ -198,8 +199,8 @@ export default function ServicesClientPage({ services, categories }: Props) {
       setError("Please upload an image (JPEG, PNG, WEBP) or a PDF file.");
       return;
     }
-    if (f.size > 50 * 1024 * 1024) {
-      setError("File is too large. Max size is 50MB for database storage.");
+    if (f.size > 80 * 1024 * 1024) {
+      setError("File is too large. Max size is 80MB.");
       return;
     }
     setError(null);
@@ -257,60 +258,70 @@ export default function ServicesClientPage({ services, categories }: Props) {
     setIsSubmitting(true);
     setError(null);
 
-    const fd = new FormData();
-    
-    // File attachment
-    if (uploadFile) {
-      fd.append("file", uploadFile);
-    } else {
-      // Create a 1x1 transparent PNG blob as a placeholder
-      const base64Png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-      try {
-        const response = await fetch(`data:image/png;base64,${base64Png}`);
-        const blob = await response.blob();
-        const placeholderFile = new File([blob], "request_placeholder.png", { type: "image/png" });
-        fd.append("file", placeholderFile);
-      } catch (err) {
-        setError("Failed to initialize request payload.");
-        setIsSubmitting(false);
-        return;
-      }
-    }
-
-    fd.append("colorMode", "color");
-    fd.append("copies", "1");
-    fd.append("printSide", "single");
-    fd.append("pagesPerSheet", "1");
-    fd.append("paymentMethod", paymentMethod);
-
-    const finalNotes = `[Service Request: ${activeSvc.name}] [Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
-    fd.append("notes", finalNotes);
-
     let progressInterval: any = null;
     try {
       let currentProgress = 0;
-      let realSocketProgress = 0;
       setUploadProgress(0);
 
-      // Estimate duration: assume ~1.5MB/s speed. Capped between 5s and 60s.
-      // If no file is uploaded (some services don't require image upload), estimatedSeconds is 5s.
+      // ── Step 1: Upload file directly to Vercel Blob (or create placeholder) ──
       const totalSize = uploadFile ? uploadFile.size : 0;
-      const estimatedSeconds = Math.max(5, Math.min(60, totalSize / (1024 * 1024 * 1.5)));
-      const incrementPer100ms = 100 / (estimatedSeconds * 10);
+      const estimatedSeconds = Math.max(5, Math.min(60, totalSize / (1024 * 1024 * 3)));
+      const incrementPer100ms = 80 / (estimatedSeconds * 10);
 
       progressInterval = setInterval(() => {
-        const socketLimit = realSocketProgress === 100 ? 95 : Math.round(realSocketProgress * 0.9);
-        if (currentProgress < socketLimit) {
-          currentProgress = Math.min(currentProgress + incrementPer100ms, socketLimit);
+        if (currentProgress < 80) {
+          currentProgress = Math.min(currentProgress + incrementPer100ms, 80);
           setUploadProgress(Math.round(currentProgress));
         }
       }, 100);
 
+      let blobUrl: string;
+      let uploadedFileName: string;
+
+      if (uploadFile) {
+        const blob = await upload(uploadFile.name, uploadFile, {
+          access: "public",
+          handleUploadUrl: "/api/upload/blob-token",
+          clientPayload: uploadFile.type || "application/octet-stream",
+        });
+        blobUrl = blob.url;
+        uploadedFileName = uploadFile.name;
+      } else {
+        // Create a 1x1 transparent PNG as a service-request placeholder
+        const base64Png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+        const response = await fetch(`data:image/png;base64,${base64Png}`);
+        const placeholderBlob = await response.blob();
+        const placeholderFile = new File([placeholderBlob], "request_placeholder.png", { type: "image/png" });
+        const uploaded = await upload(placeholderFile.name, placeholderFile, {
+          access: "public",
+          handleUploadUrl: "/api/upload/blob-token",
+          clientPayload: "image/png",
+        });
+        blobUrl = uploaded.url;
+        uploadedFileName = "request_placeholder.png";
+      }
+
+      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+      setUploadProgress(85);
+
+      // ── Step 2: Send blob URL + metadata to /api/upload ───────────────
+      const fd = new FormData();
+      fd.append("blobUrls", JSON.stringify([blobUrl]));
+      fd.append("fileNames", JSON.stringify([uploadedFileName]));
+      fd.append("pageCounts", JSON.stringify([1]));
+      fd.append("colorMode", "color");
+      fd.append("copies", "1");
+      fd.append("printSide", "single");
+      fd.append("pagesPerSheet", "1");
+      fd.append("paymentMethod", paymentMethod);
+
+      const finalNotes = `[Service Request: ${activeSvc.name}] [Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
+      fd.append("notes", finalNotes);
+
       const data = await uploadWithProgress("/api/upload", fd, (pct) => {
-        realSocketProgress = pct;
-        const mappedPct = Math.round(pct * 0.9);
-        if (mappedPct > currentProgress) {
-          currentProgress = mappedPct;
+        const mapped = 85 + Math.round(pct * 0.15);
+        if (mapped > currentProgress) {
+          currentProgress = mapped;
           setUploadProgress(currentProgress);
         }
       });
@@ -655,7 +666,7 @@ export default function ServicesClientPage({ services, categories }: Props) {
                         <div className="flex flex-col items-center">
                           <Upload className="w-10 h-10 mb-2 text-gray-300" />
                           <p className="font-bold text-xs uppercase">Drag & Drop or Browse</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 50MB</p>
+                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 80MB</p>
                         </div>
                       )}
                     </div>

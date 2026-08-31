@@ -1,22 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { PDFDocument } from "pdf-lib";
 
 function generateTrackingId() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let id = "SKT";
   for (let i = 0; i < 6; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
   return id;
-}
-
-async function getPdfPageCount(buffer: Buffer): Promise<number> {
-  try {
-    const pdfDoc = await PDFDocument.load(buffer, { updateMetadata: false });
-    return pdfDoc.getPageCount();
-  } catch (error) {
-    console.error("Error getting PDF page count:", error);
-    return 1;
-  }
 }
 
 function parsePrice(priceStr: string | null | undefined, defaultVal: number): number {
@@ -49,24 +38,6 @@ function extractMongoPrice(raw: any): number | null {
     if (raw.$numberLong !== undefined)   { const n = parseInt(raw.$numberLong, 10);  return isNaN(n) ? null : n; }
   }
   return null;
-}
-
-function getMimeTypeByExt(ext: string): string {
-  switch (ext) {
-    case ".pdf": return "application/pdf";
-    case ".jpg":
-    case ".jpeg": return "image/jpeg";
-    case ".png": return "image/png";
-    case ".webp": return "image/webp";
-    case ".gif": return "image/gif";
-    case ".bmp": return "image/bmp";
-    case ".tiff": return "image/tiff";
-    case ".doc": return "application/msword";
-    case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case ".xls": return "application/vnd.ms-excel";
-    case ".xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default: return "application/octet-stream";
-  }
 }
 
 function generateReceiptHtml(
@@ -128,7 +99,7 @@ function generateReceiptHtml(
 <div class="card">
   <div class="header">
     <h1>Shree Krishna Telecom</h1>
-    <p>Request Receipt & Invoice</p>
+    <p>Request Receipt &amp; Invoice</p>
   </div>
   <div class="body">
     <div class="tracking">
@@ -151,7 +122,7 @@ function generateReceiptHtml(
     <div class="row"><span class="k">Status</span><span class="v">Pending — Pay at Shop</span></div>
     <div class="row"><span class="k">Date</span><span class="v">${date}</span></div>
     ${notes ? `<div class="row"><span class="k">Notes</span><span class="v">${notes}</span></div>` : ""}
-    <div class="notice">⚠ Show this Tracking ID at the counter to pay & collect</div>
+    <div class="notice">⚠ Show this Tracking ID at the counter to pay &amp; collect</div>
   </div>
   <div class="footer">© ${new Date().getFullYear()} Shree Krishna Telecom</div>
 </div>
@@ -160,17 +131,33 @@ function generateReceiptHtml(
 }
 
 export async function POST(req: NextRequest) {
-  const fileRecordsCreated: string[] = [];
   try {
     const formData = await req.formData();
-    
-    // Support both multiple files under "files" and single files under "file"
-    let uploadedFiles = formData.getAll("files") as File[];
-    if (uploadedFiles.length === 0) {
-      const singleFile = formData.get("file") as File | null;
-      if (singleFile) uploadedFiles = [singleFile];
+
+    // ── Blob-based upload ──────────────────────────────────────────────────
+    // Files are now uploaded directly to Vercel Blob by the browser.
+    // The API receives blob URLs + file names + page counts (strings), not binaries.
+    const blobUrlsRaw = formData.get("blobUrls") as string | null;
+    const fileNamesRaw = formData.get("fileNames") as string | null;
+    const pageCountsRaw = formData.get("pageCounts") as string | null;
+
+    if (!blobUrlsRaw || !fileNamesRaw) {
+      return NextResponse.json({ error: "No file URLs provided" }, { status: 400 });
     }
 
+    const blobUrls: string[] = JSON.parse(blobUrlsRaw);
+    const fileNames: string[] = JSON.parse(fileNamesRaw);
+    const pageCounts: number[] = pageCountsRaw ? JSON.parse(pageCountsRaw) : fileNames.map(() => 1);
+
+    if (blobUrls.length === 0) {
+      return NextResponse.json({ error: "No files uploaded" }, { status: 400 });
+    }
+
+    if (blobUrls.length !== fileNames.length) {
+      return NextResponse.json({ error: "Mismatched file URLs and names" }, { status: 400 });
+    }
+
+    // ── Print options ──────────────────────────────────────────────────────
     const colorMode = (formData.get("colorMode") as string) || "bw";
     const copies = parseInt((formData.get("copies") as string) || "1", 10);
     const printSide = (formData.get("printSide") as string) || "single";
@@ -179,128 +166,19 @@ export async function POST(req: NextRequest) {
     const serviceType = (formData.get("serviceType") as string) || "others";
     const paymentMethod = (formData.get("paymentMethod") as string) || "in-shop";
 
-    if (uploadedFiles.length === 0) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
-
-    // 1. File Type and Size Validation
-    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".doc", ".docx", ".xls", ".xlsx"];
-    const allowedMimeTypes = [
-      "application/pdf",
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-      "image/bmp",
-      "image/tiff",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.ms-excel",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ];
-
-    for (const file of uploadedFiles) {
-      const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
-      if (!allowedMimeTypes.includes(file.type) && !allowedExtensions.includes(ext)) {
-        return NextResponse.json({ error: `File type for "${file.name}" is not supported.` }, { status: 400 });
-      }
-      if (file.size > 50 * 1024 * 1024) {
-        return NextResponse.json({ error: `File "${file.name}" is too large (max 50MB per file)` }, { status: 400 });
-      }
-    }
-
-    // 2. Sanitize and Validate numeric inputs
+    // 1. Sanitize and Validate numeric inputs
     const copiesVal = Math.max(1, isNaN(copies) ? 1 : copies);
     const pagesPerSheetVal = Math.max(1, isNaN(pagesPerSheet) ? 1 : pagesPerSheet);
 
-    // 3. Save files to FileStorage collection and chunks to FileChunk in parallel
-    const uploadPromises = uploadedFiles.map(async (file) => {
-      const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-      const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    // Total page count comes from the client (computed via pdf-lib in browser)
+    const totalPageCount = pageCounts.reduce((sum, n) => sum + n, 0);
 
-      // Determine page count
-      let filePageCount = 1;
-      if (file.type === "application/pdf" || ext === ".pdf") {
-        filePageCount = await getPdfPageCount(buffer);
-      }
+    // Build file URL strings for MongoDB storage
+    const fileUrls: string[] = blobUrls;
+    const storeFileNames = fileNames.length === 1 ? fileNames[0] : JSON.stringify(fileNames);
+    const storeFileUrls = fileUrls.length === 1 ? fileUrls[0] : JSON.stringify(fileUrls);
 
-      const fileRecord = await prisma.fileStorage.create({
-        data: {
-          filename: file.name,
-          contentType: file.type || getMimeTypeByExt(ext),
-          dataStr: "",
-        }
-      });
-      fileRecordsCreated.push(fileRecord.id);
-
-      const base64Str = buffer.toString("base64");
-      const chunkSize = 2 * 1024 * 1024; // 2MB characters chunk size
-      const numChunks = Math.ceil(base64Str.length / chunkSize);
-
-      const chunksData = [];
-      for (let i = 0; i < numChunks; i++) {
-        const start = i * chunkSize;
-        const end = Math.min(base64Str.length, start + chunkSize);
-        const chunkData = base64Str.substring(start, end);
-        chunksData.push({
-          fileId: fileRecord.id,
-          chunkIndex: i,
-          dataStr: chunkData,
-        });
-      }
-
-      // Group into batches of 4 chunks (approx 8MB per batch) to avoid MongoDB 16MB document/query limit
-      const batchSize = 4;
-      const batches = [];
-      for (let i = 0; i < chunksData.length; i += batchSize) {
-        batches.push(chunksData.slice(i, i + batchSize));
-      }
-
-      const batchPromises = batches.map(async (batch) => {
-        try {
-          if ((prisma as any).fileChunk) {
-            await (prisma as any).fileChunk.createMany({
-              data: batch.map(c => ({
-                fileId: c.fileId,
-                chunkIndex: c.chunkIndex,
-                dataStr: c.dataStr,
-              }))
-            });
-          } else {
-            throw new Error("Fallback required");
-          }
-        } catch {
-          // Raw MongoDB command fallback
-          await prisma.$runCommandRaw({
-            insert: "FileChunk",
-            documents: batch.map(c => ({
-              fileId: { $oid: c.fileId },
-              chunkIndex: c.chunkIndex,
-              dataStr: c.dataStr,
-              createdAt: { $date: new Date().toISOString() }
-            }))
-          });
-        }
-      });
-
-      await Promise.all(batchPromises);
-
-      return {
-        name: file.name,
-        url: `/api/files/${fileRecord.id}`,
-        pageCount: filePageCount
-      };
-    });
-
-    const uploadResults = await Promise.all(uploadPromises);
-
-    const fileNames: string[] = uploadResults.map(r => r.name);
-    const fileUrls: string[] = uploadResults.map(r => r.url);
-    const totalPageCount = uploadResults.reduce((sum, r) => sum + r.pageCount, 0);
-
-    // 4. Classify Request and Calculate Price
+    // 2. Classify Request and Calculate Price
     let isServiceRequest = false;
     let serviceName = "";
     let calculatedPrice = 0.0;
@@ -326,8 +204,7 @@ export async function POST(req: NextRequest) {
 
       console.log("[PRICE] Looking up price for:", { serviceType, colorMode, printSide, layoutType });
 
-      // Fetch ALL pricing records (same pattern as admin API — guaranteed to work)
-      // then filter in JS. This avoids $runCommandRaw filter compatibility issues.
+      // Fetch ALL pricing records then filter in JS.
       let allPrices: any[] = [];
       try {
         if ((prisma as any).printingPrice) {
@@ -441,7 +318,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-
     const trackingId = generateTrackingId();
 
     let userId = null;
@@ -488,10 +364,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. Save PrintRequest (Clean up FileStorage if request creation fails)
-    const storeFileNames = fileNames.length === 1 ? fileNames[0] : JSON.stringify(fileNames);
-    const storeFileUrls = fileUrls.length === 1 ? fileUrls[0] : JSON.stringify(fileUrls);
-
+    // 3. Save PrintRequest with Blob URLs directly
     try {
       const dataPayload: any = {
         trackingId,
@@ -558,7 +431,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-
     const receiptHtml = generateReceiptHtml(
       trackingId,
       storeFileNames,
@@ -588,22 +460,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("Upload error:", error);
-    
-    // Cleanup any files successfully saved in this request if transaction fails
-    for (const fileId of fileRecordsCreated) {
-      await prisma.fileStorage.delete({ where: { id: fileId } }).catch(() => {});
-      try {
-        if ((prisma as any).fileChunk) {
-          await (prisma as any).fileChunk.deleteMany({ where: { fileId } }).catch(() => {});
-        } else {
-          await prisma.$runCommandRaw({
-            delete: "FileChunk",
-            deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
-          }).catch(() => {});
-        }
-      } catch {}
-    }
-
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
   }
 }

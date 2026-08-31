@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
+/** Returns true if the string looks like a Vercel Blob CDN URL */
+function isBlobUrl(s: string): boolean {
+  return s.startsWith("https://") && s.includes(".blob.vercel-storage.com");
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -9,6 +14,38 @@ export async function GET(
     const resolvedParams = await params;
     const id = resolvedParams.id;
 
+    // ── New path: fileUrl stored directly on PrintRequest ─────────────────
+    // For new Blob-based uploads, the id param may be a MongoDB ObjectId that
+    // doesn't correspond to a FileStorage record. We look up the PrintRequest
+    // first to check whether its fileUrl is a Blob URL.
+    // (Legacy files that do have a FileStorage record fall through below.)
+    if (id && /^[0-9a-fA-F]{24}$/.test(id)) {
+      // Check PrintRequest.fileUrl for a direct Blob URL reference
+      const printReq = await prisma.printRequest.findFirst({
+        where: { fileUrl: { contains: id } }
+      }).catch(() => null);
+
+      if (printReq) {
+        // fileUrl may be a single URL or a JSON array
+        let candidateUrl: string | null = null;
+        try {
+          if (printReq.fileUrl.startsWith("[")) {
+            const urls: string[] = JSON.parse(printReq.fileUrl);
+            candidateUrl = urls.find((u) => u.includes(id)) ?? null;
+          } else {
+            candidateUrl = printReq.fileUrl;
+          }
+        } catch {
+          candidateUrl = printReq.fileUrl;
+        }
+
+        if (candidateUrl && isBlobUrl(candidateUrl)) {
+          return NextResponse.redirect(candidateUrl, { status: 307 });
+        }
+      }
+    }
+
+    // ── Legacy path: FileStorage + FileChunk in MongoDB ───────────────────
     if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
       return NextResponse.json({ error: "Invalid file ID format" }, { status: 400 });
     }
@@ -19,6 +56,11 @@ export async function GET(
 
     if (!fileRecord) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
+    }
+
+    // If dataStr is a Blob URL (migrated record), redirect directly
+    if (fileRecord.dataStr && isBlobUrl(fileRecord.dataStr)) {
+      return NextResponse.redirect(fileRecord.dataStr, { status: 307 });
     }
 
     let chunks: any[] = [];
