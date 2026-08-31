@@ -290,9 +290,12 @@ export default function ServicesClientPage({ services, categories }: Props) {
       }
       const { fileId } = await initRes.json();
 
-      // 2. Upload file chunk-by-chunk
+      // 2. Upload file chunk-by-chunk in parallel with concurrency limit
       const totalChunks = Math.ceil(fileToUpload.size / chunkSize);
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const chunkIndices = Array.from({ length: totalChunks }, (_, i) => i);
+      const limit = 5;
+
+      const uploadChunk = async (chunkIndex: number) => {
         const start = chunkIndex * chunkSize;
         const end = Math.min(fileToUpload.size, start + chunkSize);
         const chunkBlob = fileToUpload.slice(start, end);
@@ -327,7 +330,19 @@ export default function ServicesClientPage({ services, categories }: Props) {
 
         const percentage = Math.round(((chunkIndex + 1) / totalChunks) * 100);
         setUploadProgress(percentage);
-      }
+      };
+
+      const queue = [...chunkIndices];
+      const workers = Array(Math.min(limit, queue.length)).fill(null).map(async () => {
+        while (queue.length > 0) {
+          const nextIndex = queue.shift();
+          if (nextIndex !== undefined) {
+            await uploadChunk(nextIndex);
+          }
+        }
+      });
+
+      await Promise.all(workers);
 
       setUploadProgress(100);
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -757,7 +772,7 @@ export default function ServicesClientPage({ services, categories }: Props) {
                         className="bg-bauhaus-blue h-full transition-all duration-100 animate-pulse" 
                         style={{ width: `${uploadProgress}%` }}
                       />
-                      <span className="absolute inset-0 flex items-center justify-center text-xs font-black uppercase text-black mix-blend-difference">
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-black uppercase text-white drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">
                         {uploadProgress < 90 ? (
                           `Uploading: ${uploadProgress}%`
                         ) : uploadProgress < 100 ? (

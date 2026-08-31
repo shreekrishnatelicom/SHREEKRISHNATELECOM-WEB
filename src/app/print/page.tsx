@@ -425,11 +425,13 @@ export default function PrintService() {
         }
         const { fileId } = await initRes.json();
 
-        // 2. Upload file chunk-by-chunk
+        // 2. Upload file chunk-by-chunk in parallel with concurrency limit
         const totalChunks = Math.ceil(file.size / chunkSize);
         let uploadedBytes = 0;
+        const chunkIndices = Array.from({ length: totalChunks }, (_, i) => i);
+        const limit = 5;
 
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const uploadChunk = async (chunkIndex: number) => {
           const start = chunkIndex * chunkSize;
           const end = Math.min(file.size, start + chunkSize);
           const chunkBlob = file.slice(start, end);
@@ -468,8 +470,19 @@ export default function PrintService() {
           const currentTotalLoaded = loadedSizes.reduce((sum, l) => sum + l, 0);
           const overallPercentage = Math.round((currentTotalLoaded / totalSize) * 100);
           setUploadProgress(overallPercentage);
-        }
+        };
 
+        const queue = [...chunkIndices];
+        const workers = Array(Math.min(limit, queue.length)).fill(null).map(async () => {
+          while (queue.length > 0) {
+            const nextIndex = queue.shift();
+            if (nextIndex !== undefined) {
+              await uploadChunk(nextIndex);
+            }
+          }
+        });
+
+        await Promise.all(workers);
         return fileId;
       });
 
@@ -1179,7 +1192,7 @@ export default function PrintService() {
               className="bg-bauhaus-blue h-full transition-all duration-100 animate-pulse" 
               style={{ width: `${uploadProgress}%` }}
             />
-            <span className="absolute inset-0 flex items-center justify-center text-xs font-black uppercase text-black mix-blend-difference">
+            <span className="absolute inset-0 flex items-center justify-center text-xs font-black uppercase text-white drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">
               {uploadProgress < 90 ? (
                 `Uploading: ${uploadProgress}%`
               ) : uploadProgress < 100 ? (
