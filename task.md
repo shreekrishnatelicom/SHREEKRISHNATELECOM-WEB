@@ -1,0 +1,3 @@
+- [x] Modify `src/app/api/upload/route.ts` to use 2MB chunk sizes
+- [x] Group chunks into batches of 4 and write them to database in parallel using bulk inserts (`createMany` / raw MongoDB insert arrays)
+- [x] Run typescript verification compilation to ensure no syntax/type errors.

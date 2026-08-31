@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Page {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  slug      String   @unique
+  title     String
+  content   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  firebaseUid String   @unique
+  email       String   @unique
+  name        String
+  phone       String   @default("")
+  role        String   @default("USER") // "ADMIN" or "USER"
+  printRequests PrintRequest[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PrintRequest {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  trackingId    String   @unique
+  fileName      String
+  fileUrl       String
+  colorMode     String   @default("bw")      // "color" or "bw"
+  copies        Int      @default(1)
+  pagesPerSheet Int      @default(1)         // 1, 2, 4
+  printSide     String   @default("single")  // "single" or "double"
+  serviceType   String   @default("others")  // "study-material" or "others"
+  status        String   @default("pending") // "pending", "processing", "completed", "failed"
+  paymentMethod String   @default("in-shop")
+  notes         String?
+  price         Float    @default(0.0)
+  userId        String?  @db.ObjectId
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  razorpayOrderId     String?
+  razorpayPaymentId   String?
+  razorpaySignature   String?
+  couponCode          String?
+  discountPercent     Float?   @default(0.0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+
+model Service {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  name                String
+  description         String
+  price               String   // e.g. "₹2/page" or "₹50"
+  category            String   // "print", "document", "photo", "government", "other"
+  icon                String   @default("FileText")
+  isAvailable         Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  hasRequestButton    Boolean  @default(false)
+  requireImageUpload  Boolean  @default(false)
+  requestDescription  String?  @default("")
+  generateReceipt     Boolean  @default(true)
+  allowOnlinePayment  Boolean  @default(true)
+  allowOfflinePayment Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model ShopSettings {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  isOpen            Boolean  @default(true)
+  phone             String   @default("+91 XXXXX XXXXX")
+  email             String   @default("skt@example.com")
+  location          String   @default("Near Main Market, Raipur")
+  mapLink           String   @default("")
+  whatsapp          String   @default("")
+  telegram          String   @default("")
+  facebook          String   @default("")
+  instagram         String   @default("")
+  priceStarting     String   @default("₹2/page")
+  priceBwSingle     String   @default("₹2 / page")
+  priceBwDouble     String   @default("₹3.5 / page")
+  priceColorSingle  String   @default("₹10 / page")
+  priceColorDouble  String   @default("₹18 / page")
+  allowOnlinePayment  Boolean  @default(true)
+  allowOfflinePayment Boolean  @default(true)
+  openTime          String   @default("08:00")
+  closeTime         String   @default("21:00")
+  openDays          String   @default("Mon - Sun")
+  autoStatus        Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model AnnouncementBar {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  message   String
+  isActive  Boolean  @default(true)
+  color     String   @default("bauhaus-red")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FileStorage {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  filename    String
+  contentType String
+  dataStr     String
+  createdAt   DateTime @default(now())
+}
+
+model PrintingPrice {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  serviceType String   // "study-material" or "others"
+  colorMode   String   // "bw" or "color"
+  printSide   String   // "single" or "double"
+  layout      String   @default("1") // "1" for 1 page/sheet, "2+" for 2 or more pages/sheet
+  price       Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([serviceType, colorMode, printSide, layout])
+}
+
+model FileChunk {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  fileId      String   @db.ObjectId
+  chunkIndex  Int
+  dataStr     String
+  createdAt   DateTime @default(now())
+
+  @@index([fileId])
+}
+
+model Coupon {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  code        String   @unique
+  discountPct Float    // e.g. 10.0 for 10% off
+  minPrice    Float    @default(0.0)
+  usageLimit  Int?     // null or 0 means unlimited users; >0 is user limit
+  usedCount   Int      @default(0) // tracks how many times coupon has been used
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+
