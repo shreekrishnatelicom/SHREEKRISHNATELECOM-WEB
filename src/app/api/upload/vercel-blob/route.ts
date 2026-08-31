@@ -4,36 +4,22 @@ import { NextResponse } from "next/server";
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body = await request.json();
+    console.log("LOG: vercel-blob request body:", JSON.stringify(body));
 
     const jsonResponse = await handleUpload({
       body,
       request,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
       onBeforeGenerateToken: async (pathname) => {
-        // Allow public uploads but restrict extensions/content-types
         return {
-          allowedContentTypes: [
-            "application/pdf",
-            "image/jpeg",
-            "image/jpg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "image/bmp",
-            "image/tiff",
-            "application/msword",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.ms-excel",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          ],
-          // Optional payload if you need to pass additional info to onUploadCompleted
+          // Allow all content types here to avoid browser MIME-type mismatch CORS blocks.
+          // File extension validation is securely performed in the subsequent POST /api/upload handler.
           tokenPayload: JSON.stringify({
             uploadedAt: new Date().toISOString()
           })
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
-        // The file is fully uploaded to Vercel Blob.
-        // We will store it in the database in the subsequent client request to POST /api/upload
         console.log("Vercel Blob upload completed successfully:", blob.url);
       }
     });

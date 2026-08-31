@@ -167,6 +167,16 @@ export async function POST(req: NextRequest) {
     
     fileUrls = body.fileUrls || [];
     const fileNames: string[] = body.fileNames || [];
+    
+    // File Type and Extension Validation
+    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".doc", ".docx", ".xls", ".xlsx"];
+    for (const name of fileNames) {
+      const ext = name.substring(name.lastIndexOf(".")).toLowerCase();
+      if (!allowedExtensions.includes(ext)) {
+        return NextResponse.json({ error: `File type for "${name}" is not supported.` }, { status: 400 });
+      }
+    }
+
     const colorMode = body.colorMode || "bw";
     const copies = parseInt(body.copies || "1", 10);
     const printSide = body.printSide || "single";
