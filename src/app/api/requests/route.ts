@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { del } from "@vercel/blob";
 
 async function cleanupOldFiles() {
   try {
@@ -30,23 +31,32 @@ async function cleanupOldFiles() {
       }
 
       for (const url of urls) {
-        const fileId = url.split("/").pop();
-        if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+        if (url.includes("vercel-storage.com")) {
           try {
-            await prisma.fileStorage.delete({ where: { id: fileId } });
-          } catch (e) {}
-          try {
-            if ((prisma as any).fileChunk) {
-              await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
-            } else {
-              await prisma.$runCommandRaw({
-                delete: "FileChunk",
-                deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
-              });
-            }
-          } catch (e) {}
+            await del(url);
+          } catch (e) {
+            console.error("Failed to delete old Vercel Blob file:", url, e);
+          }
+        } else {
+          const fileId = url.split("/").pop();
+          if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+            try {
+              await prisma.fileStorage.delete({ where: { id: fileId } });
+            } catch (e) {}
+            try {
+              if ((prisma as any).fileChunk) {
+                await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
+              } else {
+                await prisma.$runCommandRaw({
+                  delete: "FileChunk",
+                  deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
+                });
+              }
+            } catch (e) {}
+          }
         }
       }
+
 
       await prisma.printRequest.update({
         where: { id: req.id },
@@ -90,23 +100,32 @@ async function cleanupOldFiles() {
       }
 
       for (const url of urls) {
-        const fileId = url.split("/").pop();
-        if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+        if (url.includes("vercel-storage.com")) {
           try {
-            await prisma.fileStorage.delete({ where: { id: fileId } });
-          } catch (e) {}
-          try {
-            if ((prisma as any).fileChunk) {
-              await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
-            } else {
-              await prisma.$runCommandRaw({
-                delete: "FileChunk",
-                deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
-              });
-            }
-          } catch (e) {}
+            await del(url);
+          } catch (e) {
+            console.error("Failed to delete expired Vercel Blob file:", url, e);
+          }
+        } else {
+          const fileId = url.split("/").pop();
+          if (fileId && /^[0-9a-fA-F]{24}$/.test(fileId)) {
+            try {
+              await prisma.fileStorage.delete({ where: { id: fileId } });
+            } catch (e) {}
+            try {
+              if ((prisma as any).fileChunk) {
+                await (prisma as any).fileChunk.deleteMany({ where: { fileId } });
+              } else {
+                await prisma.$runCommandRaw({
+                  delete: "FileChunk",
+                  deletes: [{ q: { fileId: { $oid: fileId } }, limit: 0 }]
+                });
+              }
+            } catch (e) {}
+          }
         }
       }
+
 
       try {
         await prisma.printRequest.delete({

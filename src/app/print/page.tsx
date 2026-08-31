@@ -290,8 +290,8 @@ export default function PrintService() {
         setError(`File "${f.name}" is not supported. Supported: PDF, Images, Word, Excel.`);
         return;
       }
-      if (f.size > 80 * 1024 * 1024) {
-        setError(`File "${f.name}" is too large. Max size is 80MB per file.`);
+      if (f.size > 50 * 1024 * 1024) {
+        setError(`File "${f.name}" is too large. Max size is 50MB per file.`);
         return;
       }
       newFiles.push(f);
@@ -400,82 +400,55 @@ export default function PrintService() {
     setIsSubmitting(true);
     setError(null);
 
-    let progressInterval: any = null;
+    // Prepend customer name, email and phone to notes field
+    const finalNotes = `[Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
+
     try {
-      let currentProgress = 0;
       setUploadProgress(0);
 
-      // ── Step 1: Compute PDF page counts client-side ────────────────────
-      const pageCounts: number[] = [];
-      for (const f of files) {
-        const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
-        if (f.type === "application/pdf" || ext === ".pdf") {
-          try {
-            const buf = await f.arrayBuffer();
-            const pdfDoc = await PDFDocument.load(buf, { updateMetadata: false });
-            pageCounts.push(pdfDoc.getPageCount());
-          } catch {
-            pageCounts.push(1);
-          }
-        } else {
-          pageCounts.push(1);
-        }
-      }
-
-      // ── Step 2: Upload files directly to Vercel Blob ───────────────────
       const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-      const estimatedSeconds = Math.max(5, Math.min(60, totalSize / (1024 * 1024 * 3)));
-      const incrementPer100ms = 80 / (estimatedSeconds * 10); // goes to 80% during upload
+      const loadedSizes = new Array(files.length).fill(0);
 
-      progressInterval = setInterval(() => {
-        if (currentProgress < 80) {
-          currentProgress = Math.min(currentProgress + incrementPer100ms, 80);
-          setUploadProgress(Math.round(currentProgress));
-        }
-      }, 100);
-
-      const blobUrls: string[] = [];
-      for (const f of files) {
-        const blob = await upload(f.name, f, {
+      const uploadPromises = files.map(async (file, index) => {
+        return await upload(file.name, file, {
           access: "public",
-          handleUploadUrl: "/api/upload/blob-token",
-          clientPayload: f.type || "application/octet-stream",
+          handleUploadUrl: "/api/upload/vercel-blob",
+          onUploadProgress: (progressEvent) => {
+            loadedSizes[index] = (progressEvent.percentage / 100) * file.size;
+            const currentTotalLoaded = loadedSizes.reduce((sum, l) => sum + l, 0);
+            const overallPercentage = Math.round((currentTotalLoaded / totalSize) * 100);
+            setUploadProgress(overallPercentage);
+          }
         });
-        blobUrls.push(blob.url);
-      }
-
-      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-      setUploadProgress(85);
-
-      // ── Step 3: Send blob URLs + metadata to /api/upload ──────────────
-      const fd = new FormData();
-      fd.append("blobUrls", JSON.stringify(blobUrls));
-      fd.append("fileNames", JSON.stringify(files.map((f) => f.name)));
-      fd.append("pageCounts", JSON.stringify(pageCounts));
-      fd.append("colorMode", colorMode);
-      fd.append("copies", String(copies));
-      fd.append("printSide", printSide);
-      fd.append("pagesPerSheet", String(pagesPerSheet));
-      fd.append("serviceType", serviceType);
-      fd.append("paymentMethod", paymentMethod);
-      const finalNotes = `[Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
-      fd.append("notes", finalNotes);
-      if (appliedCoupon) fd.append("couponCode", appliedCoupon.code);
-
-      const data = await uploadWithProgress("/api/upload", fd, (pct) => {
-        const mapped = 85 + Math.round(pct * 0.15);
-        if (mapped > currentProgress) {
-          currentProgress = mapped;
-          setUploadProgress(currentProgress);
-        }
       });
 
-      if (progressInterval) {
-        clearInterval(progressInterval);
-        progressInterval = null;
-      }
+      const uploadResults = await Promise.all(uploadPromises);
       setUploadProgress(100);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileUrls: uploadResults.map(r => r.url),
+          fileNames: files.map(f => f.name),
+          colorMode,
+          copies: String(copies),
+          printSide,
+          pagesPerSheet: String(pagesPerSheet),
+          serviceType,
+          paymentMethod,
+          notes: finalNotes,
+          couponCode: appliedCoupon ? appliedCoupon.code : undefined,
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to submit request");
+      }
+
+      const data = await res.json();
 
       // Handle Razorpay Online payment flow
       if (paymentMethod === "online" && data.razorpayOrderId) {
@@ -607,13 +580,11 @@ export default function PrintService() {
       setUploadProgress(null);
       setError(err.message || "Something went wrong.");
     } finally {
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
       setIsSubmitting(false);
       setUploadProgress(null);
     }
   };
+
 
   const Step = ({ n, label, color }: { n: string; label: string; color: string }) => (
     <div className={`flex items-center gap-2.5 sm:gap-3 text-base sm:text-lg font-black uppercase mb-3 sm:mb-4 ${color}`}>
@@ -856,7 +827,7 @@ export default function PrintService() {
               <div className="flex flex-col items-center py-4">
                 <Upload className="w-12 h-12 mb-3 text-gray-300" />
                 <p className="font-bold uppercase">Drag & Drop or Click to Browse</p>
-                <p className="text-xs text-gray-400 mt-1">PDF, Photos, Word, Excel • Max 80MB per file</p>
+                <p className="text-xs text-gray-400 mt-1">PDF, Photos, Word, Excel • Max 50MB per file</p>
               </div>
             )}
           </div>

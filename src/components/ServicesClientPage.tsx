@@ -199,8 +199,8 @@ export default function ServicesClientPage({ services, categories }: Props) {
       setError("Please upload an image (JPEG, PNG, WEBP) or a PDF file.");
       return;
     }
-    if (f.size > 80 * 1024 * 1024) {
-      setError("File is too large. Max size is 80MB.");
+    if (f.size > 50 * 1024 * 1024) {
+      setError("File is too large. Max size is 50MB for database storage.");
       return;
     }
     setError(null);
@@ -258,80 +258,55 @@ export default function ServicesClientPage({ services, categories }: Props) {
     setIsSubmitting(true);
     setError(null);
 
-    let progressInterval: any = null;
-    try {
-      let currentProgress = 0;
-      setUploadProgress(0);
-
-      // ── Step 1: Upload file directly to Vercel Blob (or create placeholder) ──
-      const totalSize = uploadFile ? uploadFile.size : 0;
-      const estimatedSeconds = Math.max(5, Math.min(60, totalSize / (1024 * 1024 * 3)));
-      const incrementPer100ms = 80 / (estimatedSeconds * 10);
-
-      progressInterval = setInterval(() => {
-        if (currentProgress < 80) {
-          currentProgress = Math.min(currentProgress + incrementPer100ms, 80);
-          setUploadProgress(Math.round(currentProgress));
-        }
-      }, 100);
-
-      let blobUrl: string;
-      let uploadedFileName: string;
-
-      if (uploadFile) {
-        const blob = await upload(uploadFile.name, uploadFile, {
-          access: "public",
-          handleUploadUrl: "/api/upload/blob-token",
-          clientPayload: uploadFile.type || "application/octet-stream",
-        });
-        blobUrl = blob.url;
-        uploadedFileName = uploadFile.name;
-      } else {
-        // Create a 1x1 transparent PNG as a service-request placeholder
-        const base64Png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    let fileToUpload = uploadFile;
+    if (!fileToUpload) {
+      const base64Png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+      try {
         const response = await fetch(`data:image/png;base64,${base64Png}`);
-        const placeholderBlob = await response.blob();
-        const placeholderFile = new File([placeholderBlob], "request_placeholder.png", { type: "image/png" });
-        const uploaded = await upload(placeholderFile.name, placeholderFile, {
-          access: "public",
-          handleUploadUrl: "/api/upload/blob-token",
-          clientPayload: "image/png",
-        });
-        blobUrl = uploaded.url;
-        uploadedFileName = "request_placeholder.png";
+        const blob = await response.blob();
+        fileToUpload = new File([blob], "request_placeholder.png", { type: "image/png" });
+      } catch (err) {
+        setError("Failed to initialize request payload.");
+        setIsSubmitting(false);
+        return;
       }
+    }
 
-      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-      setUploadProgress(85);
-
-      // ── Step 2: Send blob URL + metadata to /api/upload ───────────────
-      const fd = new FormData();
-      fd.append("blobUrls", JSON.stringify([blobUrl]));
-      fd.append("fileNames", JSON.stringify([uploadedFileName]));
-      fd.append("pageCounts", JSON.stringify([1]));
-      fd.append("colorMode", "color");
-      fd.append("copies", "1");
-      fd.append("printSide", "single");
-      fd.append("pagesPerSheet", "1");
-      fd.append("paymentMethod", paymentMethod);
-
-      const finalNotes = `[Service Request: ${activeSvc.name}] [Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
-      fd.append("notes", finalNotes);
-
-      const data = await uploadWithProgress("/api/upload", fd, (pct) => {
-        const mapped = 85 + Math.round(pct * 0.15);
-        if (mapped > currentProgress) {
-          currentProgress = mapped;
-          setUploadProgress(currentProgress);
+    try {
+      setUploadProgress(0);
+      const blobResult = await upload(fileToUpload.name, fileToUpload, {
+        access: "public",
+        handleUploadUrl: "/api/upload/vercel-blob",
+        onUploadProgress: (progressEvent) => {
+          setUploadProgress(progressEvent.percentage);
         }
       });
-
-      if (progressInterval) {
-        clearInterval(progressInterval);
-        progressInterval = null;
-      }
       setUploadProgress(100);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const finalNotes = `[Service Request: ${activeSvc.name}] [Customer Name: ${name}] [Customer Email: ${email}] [Customer Phone: ${phone}]${notes ? `\nNotes: ${notes}` : ""}`;
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileUrls: [blobResult.url],
+          fileNames: [fileToUpload.name],
+          colorMode: "color",
+          copies: "1",
+          printSide: "single",
+          pagesPerSheet: "1",
+          paymentMethod,
+          notes: finalNotes,
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to submit request");
+      }
+
+      const data = await res.json();
 
       // Handle Razorpay Online payment flow for service request
       if (paymentMethod === "online" && data.razorpayOrderId) {
@@ -457,15 +432,13 @@ export default function ServicesClientPage({ services, categories }: Props) {
       console.error(err);
       setError(err.message || "Failed to submit request. Please try again.");
     } finally {
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
       setUploadProgress(null);
       if (paymentMethod !== "online") {
         setIsSubmitting(false);
       }
     }
   };
+
 
   // Group by category
   const grouped = services.reduce<Record<string, Service[]>>((acc, svc) => {
@@ -666,7 +639,7 @@ export default function ServicesClientPage({ services, categories }: Props) {
                         <div className="flex flex-col items-center">
                           <Upload className="w-10 h-10 mb-2 text-gray-300" />
                           <p className="font-bold text-xs uppercase">Drag & Drop or Browse</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 80MB</p>
+                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 50MB</p>
                         </div>
                       )}
                     </div>

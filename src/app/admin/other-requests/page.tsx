@@ -118,18 +118,29 @@ export default function AdminOtherRequests() {
   };
 
   const handleDeleteFile = async (reqId: string, fileUrl: string) => {
-    const fileId = fileUrl.split("/").pop();
-    if (!fileId || !/^[0-9a-fA-F]{24}$/.test(fileId)) return;
-
     if (!confirm("Are you sure you want to delete this file from the server? This action cannot be undone, but request history will be saved.")) {
       return;
     }
 
     setIsDeleting(reqId);
     try {
-      const res = await fetch(`/api/files/${fileId}`, {
-        method: "DELETE"
-      });
+      let res;
+      if (fileUrl.includes("vercel-storage.com")) {
+        res = await fetch(`/api/files/vercel-blob?url=${encodeURIComponent(fileUrl)}`, {
+          method: "DELETE"
+        });
+      } else {
+        const fileId = fileUrl.split("/").pop();
+        if (!fileId || !/^[0-9a-fA-F]{24}$/.test(fileId)) {
+          alert("Invalid file format");
+          setIsDeleting(null);
+          return;
+        }
+        res = await fetch(`/api/files/${fileId}`, {
+          method: "DELETE"
+        });
+      }
+
       if (res.ok) {
         setRequests((prev) => prev.map((r) => {
           if (r.id !== reqId) return r;
@@ -141,7 +152,7 @@ export default function AdminOtherRequests() {
               const names: string[] = JSON.parse(r.fileName);
               const filteredIndices = urls
                 .map((url, idx) => ({ url, idx }))
-                .filter(item => !item.url.includes(fileId))
+                .filter(item => item.url !== fileUrl && !item.url.includes(fileUrl))
                 .map(item => item.idx);
               if (filteredIndices.length === 0) {
                 newFileUrl = "/api/files/deleted";

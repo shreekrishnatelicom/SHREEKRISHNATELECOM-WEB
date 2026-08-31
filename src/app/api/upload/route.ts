@@ -1,11 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { PDFDocument } from "pdf-lib";
+import { del } from "@vercel/blob";
 
 function generateTrackingId() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let id = "SKT";
   for (let i = 0; i < 6; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
   return id;
+}
+
+async function getPdfPageCount(buffer: Buffer): Promise<number> {
+  try {
+    const pdfDoc = await PDFDocument.load(buffer, { updateMetadata: false });
+    return pdfDoc.getPageCount();
+  } catch (error) {
+    console.error("Error getting PDF page count:", error);
+    return 1;
+  }
 }
 
 function parsePrice(priceStr: string | null | undefined, defaultVal: number): number {
@@ -38,6 +50,24 @@ function extractMongoPrice(raw: any): number | null {
     if (raw.$numberLong !== undefined)   { const n = parseInt(raw.$numberLong, 10);  return isNaN(n) ? null : n; }
   }
   return null;
+}
+
+function getMimeTypeByExt(ext: string): string {
+  switch (ext) {
+    case ".pdf": return "application/pdf";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".png": return "image/png";
+    case ".webp": return "image/webp";
+    case ".gif": return "image/gif";
+    case ".bmp": return "image/bmp";
+    case ".tiff": return "image/tiff";
+    case ".doc": return "application/msword";
+    case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case ".xls": return "application/vnd.ms-excel";
+    case ".xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    default: return "application/octet-stream";
+  }
 }
 
 function generateReceiptHtml(
@@ -99,7 +129,7 @@ function generateReceiptHtml(
 <div class="card">
   <div class="header">
     <h1>Shree Krishna Telecom</h1>
-    <p>Request Receipt &amp; Invoice</p>
+    <p>Request Receipt & Invoice</p>
   </div>
   <div class="body">
     <div class="tracking">
@@ -122,7 +152,7 @@ function generateReceiptHtml(
     <div class="row"><span class="k">Status</span><span class="v">Pending — Pay at Shop</span></div>
     <div class="row"><span class="k">Date</span><span class="v">${date}</span></div>
     ${notes ? `<div class="row"><span class="k">Notes</span><span class="v">${notes}</span></div>` : ""}
-    <div class="notice">⚠ Show this Tracking ID at the counter to pay &amp; collect</div>
+    <div class="notice">⚠ Show this Tracking ID at the counter to pay & collect</div>
   </div>
   <div class="footer">© ${new Date().getFullYear()} Shree Krishna Telecom</div>
 </div>
@@ -131,54 +161,60 @@ function generateReceiptHtml(
 }
 
 export async function POST(req: NextRequest) {
+  let fileUrls: string[] = [];
   try {
-    const formData = await req.formData();
+    const body = await req.json();
+    
+    fileUrls = body.fileUrls || [];
+    const fileNames: string[] = body.fileNames || [];
+    const colorMode = body.colorMode || "bw";
+    const copies = parseInt(body.copies || "1", 10);
+    const printSide = body.printSide || "single";
+    const pagesPerSheet = parseInt(body.pagesPerSheet || "1", 10);
+    const notes = body.notes || "";
+    const serviceType = body.serviceType || "others";
+    const paymentMethod = body.paymentMethod || "in-shop";
 
-    // ── Blob-based upload ──────────────────────────────────────────────────
-    // Files are now uploaded directly to Vercel Blob by the browser.
-    // The API receives blob URLs + file names + page counts (strings), not binaries.
-    const blobUrlsRaw = formData.get("blobUrls") as string | null;
-    const fileNamesRaw = formData.get("fileNames") as string | null;
-    const pageCountsRaw = formData.get("pageCounts") as string | null;
-
-    if (!blobUrlsRaw || !fileNamesRaw) {
-      return NextResponse.json({ error: "No file URLs provided" }, { status: 400 });
-    }
-
-    const blobUrls: string[] = JSON.parse(blobUrlsRaw);
-    const fileNames: string[] = JSON.parse(fileNamesRaw);
-    const pageCounts: number[] = pageCountsRaw ? JSON.parse(pageCountsRaw) : fileNames.map(() => 1);
-
-    if (blobUrls.length === 0) {
+    if (fileUrls.length === 0) {
       return NextResponse.json({ error: "No files uploaded" }, { status: 400 });
     }
-
-    if (blobUrls.length !== fileNames.length) {
-      return NextResponse.json({ error: "Mismatched file URLs and names" }, { status: 400 });
-    }
-
-    // ── Print options ──────────────────────────────────────────────────────
-    const colorMode = (formData.get("colorMode") as string) || "bw";
-    const copies = parseInt((formData.get("copies") as string) || "1", 10);
-    const printSide = (formData.get("printSide") as string) || "single";
-    const pagesPerSheet = parseInt((formData.get("pagesPerSheet") as string) || "1", 10);
-    const notes = (formData.get("notes") as string) || "";
-    const serviceType = (formData.get("serviceType") as string) || "others";
-    const paymentMethod = (formData.get("paymentMethod") as string) || "in-shop";
 
     // 1. Sanitize and Validate numeric inputs
     const copiesVal = Math.max(1, isNaN(copies) ? 1 : copies);
     const pagesPerSheetVal = Math.max(1, isNaN(pagesPerSheet) ? 1 : pagesPerSheet);
 
-    // Total page count comes from the client (computed via pdf-lib in browser)
-    const totalPageCount = pageCounts.reduce((sum, n) => sum + n, 0);
+    // 2. Fetch PDFs to count pages securely
+    const uploadResults = [];
+    for (let i = 0; i < fileUrls.length; i++) {
+      const url = fileUrls[i];
+      const name = fileNames[i] || `file_${i}`;
+      const ext = name.substring(name.lastIndexOf(".")).toLowerCase();
 
-    // Build file URL strings for MongoDB storage
-    const fileUrls: string[] = blobUrls;
-    const storeFileNames = fileNames.length === 1 ? fileNames[0] : JSON.stringify(fileNames);
-    const storeFileUrls = fileUrls.length === 1 ? fileUrls[0] : JSON.stringify(fileUrls);
+      let filePageCount = 1;
+      if (ext === ".pdf") {
+        try {
+          const fileRes = await fetch(url);
+          if (fileRes.ok) {
+            const buffer = Buffer.from(await fileRes.arrayBuffer());
+            filePageCount = await getPdfPageCount(buffer);
+          } else {
+            console.error(`Failed to fetch file from Blob URL: ${url}`);
+          }
+        } catch (err) {
+          console.error(`Error counting PDF pages from Vercel Blob URL: ${url}`, err);
+        }
+      }
 
-    // 2. Classify Request and Calculate Price
+      uploadResults.push({
+        name,
+        url,
+        pageCount: filePageCount
+      });
+    }
+
+    const totalPageCount = uploadResults.reduce((sum, r) => sum + r.pageCount, 0);
+
+    // 3. Classify Request and Calculate Price
     let isServiceRequest = false;
     let serviceName = "";
     let calculatedPrice = 0.0;
@@ -204,7 +240,8 @@ export async function POST(req: NextRequest) {
 
       console.log("[PRICE] Looking up price for:", { serviceType, colorMode, printSide, layoutType });
 
-      // Fetch ALL pricing records then filter in JS.
+      // Fetch ALL pricing records (same pattern as admin API — guaranteed to work)
+      // then filter in JS. This avoids $runCommandRaw filter compatibility issues.
       let allPrices: any[] = [];
       try {
         if ((prisma as any).printingPrice) {
@@ -259,7 +296,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Coupon code validation & calculation
-    const couponCode = (formData.get("couponCode") as string) || "";
+    const couponCode = body.couponCode || "";
     let appliedCouponCode: string | null = null;
     let discountPercent = 0.0;
 
@@ -364,7 +401,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3. Save PrintRequest with Blob URLs directly
+    // 4. Save PrintRequest
+    const storeFileNames = fileNames.length === 1 ? fileNames[0] : JSON.stringify(fileNames);
+    const storeFileUrls = fileUrls.length === 1 ? fileUrls[0] : JSON.stringify(fileUrls);
+
     try {
       const dataPayload: any = {
         trackingId,
@@ -460,6 +500,16 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("Upload error:", error);
+    
+    // Cleanup Vercel Blob files if the request transaction fails
+    for (const url of fileUrls) {
+      try {
+        await del(url);
+      } catch (delErr) {
+        console.error("Failed to delete Vercel Blob during error cleanup:", url, delErr);
+      }
+    }
+
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
   }
 }
