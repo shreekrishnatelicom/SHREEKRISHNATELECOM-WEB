@@ -198,8 +198,8 @@ export default function ServicesClientPage({ services, categories }: Props) {
       setError("Please upload an image (JPEG, PNG, WEBP) or a PDF file.");
       return;
     }
-    if (f.size > 50 * 1024 * 1024) {
-      setError("File is too large. Max size is 50MB for database storage.");
+    if (f.size > 80 * 1024 * 1024) {
+      setError("File is too large. Max size is 80MB for database storage.");
       return;
     }
     setError(null);
@@ -701,7 +701,7 @@ export default function ServicesClientPage({ services, categories }: Props) {
                         <div className="flex flex-col items-center">
                           <Upload className="w-10 h-10 mb-2 text-gray-300" />
                           <p className="font-bold text-xs uppercase">Drag & Drop or Browse</p>
-                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 50MB</p>
+                          <p className="text-[10px] text-gray-400 mt-1">Images or PDFs only • Max 80MB</p>
                         </div>
                       )}
                     </div>

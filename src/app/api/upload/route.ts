@@ -199,13 +199,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `File type for "${name}" is not supported.` }, { status: 400 });
       }
 
-      // Fetch chunks from database
+      // Fetch chunks from database without database-side sort (prevents MongoDB 32MB in-memory sort error)
       let chunks: any[] = [];
       try {
         if ((prisma as any).fileChunk) {
           chunks = await (prisma as any).fileChunk.findMany({
-            where: { fileId },
-            orderBy: { chunkIndex: "asc" }
+            where: { fileId }
           });
         } else {
           throw new Error("Fallback required");
@@ -214,13 +213,20 @@ export async function POST(req: NextRequest) {
         // Raw MongoDB query fallback
         const rawResult: any = await prisma.$runCommandRaw({
           find: "FileChunk",
-          filter: { fileId: { $oid: fileId } },
-          sort: { chunkIndex: 1 }
+          filter: {
+            $or: [
+              { fileId: { $oid: fileId } },
+              { fileId: fileId }
+            ]
+          }
         });
         if (rawResult && rawResult.cursor && rawResult.cursor.firstBatch) {
           chunks = rawResult.cursor.firstBatch;
         }
       }
+
+      // Sort in-memory in JavaScript (handles any file size without MongoDB 32MB RAM sort limit)
+      chunks.sort((a: any, b: any) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
 
       const base64Str = chunks.map((c: any) => c.dataStr).join("");
       const buffer = Buffer.from(base64Str, "base64");

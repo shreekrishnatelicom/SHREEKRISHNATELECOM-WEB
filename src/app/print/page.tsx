@@ -289,8 +289,8 @@ export default function PrintService() {
         setError(`File "${f.name}" is not supported. Supported: PDF, Images, Word, Excel.`);
         return;
       }
-      if (f.size > 50 * 1024 * 1024) {
-        setError(`File "${f.name}" is too large. Max size is 50MB per file.`);
+      if (f.size > 80 * 1024 * 1024) {
+        setError(`File "${f.name}" is too large. Max size is 80MB per file.`);
         return;
       }
       newFiles.push(f);
@@ -890,7 +890,7 @@ export default function PrintService() {
               <div className="flex flex-col items-center py-4">
                 <Upload className="w-12 h-12 mb-3 text-gray-300" />
                 <p className="font-bold uppercase">Drag & Drop or Click to Browse</p>
-                <p className="text-xs text-gray-400 mt-1">PDF, Photos, Word, Excel • Max 50MB per file</p>
+                <p className="text-xs text-gray-400 mt-1">PDF, Photos, Word, Excel • Max 80MB per file</p>
               </div>
             )}
           </div>

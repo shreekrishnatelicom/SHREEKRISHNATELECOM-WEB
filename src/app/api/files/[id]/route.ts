@@ -26,8 +26,7 @@ export async function GET(
     try {
       if ((prisma as any).fileChunk) {
         chunks = await (prisma as any).fileChunk.findMany({
-          where: { fileId: id },
-          orderBy: { chunkIndex: "asc" }
+          where: { fileId: id }
         });
       } else {
         throw new Error("Fallback required");
@@ -36,13 +35,20 @@ export async function GET(
       // Raw MongoDB query fallback
       const rawResult: any = await prisma.$runCommandRaw({
         find: "FileChunk",
-        filter: { fileId: { $oid: id } },
-        sort: { chunkIndex: 1 }
+        filter: {
+          $or: [
+            { fileId: { $oid: id } },
+            { fileId: id }
+          ]
+        }
       });
       if (rawResult && rawResult.cursor && rawResult.cursor.firstBatch) {
         chunks = rawResult.cursor.firstBatch;
       }
     }
+
+    // Sort in-memory in JavaScript
+    chunks.sort((a: any, b: any) => (a.chunkIndex ?? 0) - (b.chunkIndex ?? 0));
 
     let base64Str = "";
     if (chunks.length > 0) {

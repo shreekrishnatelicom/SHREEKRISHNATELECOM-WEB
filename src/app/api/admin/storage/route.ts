@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
         { $project: { length: { $strLenBytes: "$dataStr" } } },
         { $group: { _id: null, totalBytes: { $sum: "$length" } } }
       ],
-      cursor: {}
+      cursor: {},
+      allowDiskUse: true
     });
 
     let aggFileChunk: any = null;
@@ -22,7 +23,8 @@ export async function GET(req: NextRequest) {
           { $project: { length: { $strLenBytes: "$dataStr" } } },
           { $group: { _id: null, totalBytes: { $sum: "$length" } } }
         ],
-        cursor: {}
+        cursor: {},
+        allowDiskUse: true
       });
     } catch (e) {
       console.warn("FileChunk aggregation failed, possibly due to un-indexed collection:", e);
